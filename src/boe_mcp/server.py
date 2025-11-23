@@ -10,7 +10,7 @@ logger = logging.getLogger("BOE-MCPServer")
 
 mcp = FastMCP(
     "boe-mcp",
-    description="MCP server for querying the Spanish Official State Gazette (BOE) API"
+    instructions="MCP server for querying the Spanish Official State Gazette (BOE) API"
 )
 
 BOE_API_BASE = "https://www.boe.es"
