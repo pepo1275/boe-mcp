@@ -1,0 +1,38 @@
+{
+  "tools_found": [
+    {
+      "name": "search_laws_list",
+      "line": 78,
+      "type": "async",
+      "description": "Búsqueda avanzada de normas del BOE"
+    },
+    {
+      "name": "get_law_section",
+      "line": 219,
+      "type": "async",
+      "description": "Recupera una parte específica de una norma consolidada"
+    },
+    {
+      "name": "get_boe_summary",
+      "line": 276,
+      "type": "async",
+      "description": "Obtener sumario del BOE para una fecha"
+    },
+    {
+      "name": "get_borme_summary",
+      "line": 306,
+      "type": "async",
+      "description": "Obtener sumario del BORME para una fecha"
+    },
+    {
+      "name": "get_auxiliary_table",
+      "line": 334,
+      "type": "async",
+      "description": "Consultar tablas auxiliares de la API del BOE"
+    }
+  ],
+  "total_tools": 5,
+  "mcp_framework": "FastMCP",
+  "server_name": "boe-mcp",
+  "response_time_ms": 150
+}

@@ -1,0 +1,10 @@
+{
+  "mcp_server": "boe-mcp",
+  "tool_name": "search_laws_list",
+  "parameters": {
+    "query_value": "Ley 40/2015",
+    "limit": 5,
+    "offset": 0
+  },
+  "timestamp": "2025-11-23T16:15:00Z"
+}

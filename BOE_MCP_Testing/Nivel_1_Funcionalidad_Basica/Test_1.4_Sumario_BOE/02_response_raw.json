@@ -1,0 +1,33 @@
+{
+  "mcp_response_status": "TRUNCADA",
+  "nota": "Respuesta truncada a 25000 tokens por límite del sistema",
+  "fecha_solicitada": "20241101",
+  "estructura_recibida": {
+    "status": {"code": "200", "text": "ok"},
+    "data": {
+      "sumario": {
+        "metadatos": {
+          "publicacion": "BOE",
+          "fecha_publicacion": "20241101"
+        },
+        "diario": [{
+          "numero": "264",
+          "sumario_diario": {
+            "identificador": "BOE-S-2024-264",
+            "url_pdf": "https://www.boe.es/boe/dias/2024/11/01/pdfs/BOE-S-2024-264.pdf"
+          },
+          "seccion": "Array de secciones (ver response_parsed.md para detalles)"
+        }]
+      }
+    }
+  },
+  "secciones_identificadas": [
+    "I. Disposiciones generales",
+    "II. Autoridades y personal - A. Nombramientos",
+    "II. Autoridades y personal - B. Oposiciones y concursos",
+    "III. Otras disposiciones",
+    "V. Anuncios - B. Otros anuncios oficiales",
+    "T.C. Sección del Tribunal Constitucional"
+  ],
+  "hallazgo": "Ver HALLAZGO_001_Sumarios_Extensos.md"
+}

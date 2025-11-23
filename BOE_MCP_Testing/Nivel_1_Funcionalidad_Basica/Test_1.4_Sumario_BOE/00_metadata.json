@@ -1,0 +1,11 @@
+{
+  "test_id": "1.4",
+  "test_name": "Sumario BOE fecha reciente",
+  "category": "Nivel 1 - Funcionalidad Básica",
+  "description": "Obtener el sumario del BOE para una fecha específica",
+  "mcp_tool": "get_boe_summary",
+  "date_executed": "2025-11-23",
+  "executor": "Claude Code (Claude Sonnet 4.5)",
+  "status": "EXITOSO_CON_OBSERVACIONES",
+  "hallazgo_relacionado": "HALLAZGO_001_Sumarios_Extensos"
+}

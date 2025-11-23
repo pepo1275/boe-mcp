@@ -1,0 +1,15 @@
+{
+  "mcp_server": "boe-mcp",
+  "tool_name": "get_boe_summary",
+  "parameters": {
+    "params": {
+      "fecha": "20241101"
+    }
+  },
+  "timestamp": "2025-11-23T16:45:00Z",
+  "notas": [
+    "Se eligió 1 de noviembre de 2024 (festivo - Todos los Santos)",
+    "Intento previo con 24/11/2024 (domingo) devolvió 'No se pudo obtener'",
+    "Días festivos también tienen publicaciones, aunque menos que días laborales"
+  ]
+}
