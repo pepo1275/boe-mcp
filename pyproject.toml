@@ -44,9 +44,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/andcorbal/boe-mcp"
-Repository = "https://github.com/andcorbal/boe-mcp"
-Issues = "https://github.com/andcorbal/boe-mcp/issues"
+Homepage = "https://github.com/pepo1275/boe-mcp"
+Repository = "https://github.com/pepo1275/boe-mcp"
+Issues = "https://github.com/pepo1275/boe-mcp/issues"
 
 [project.scripts]
 boe_mcp = "boe_mcp.server:main"
