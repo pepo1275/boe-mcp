@@ -1,0 +1,16 @@
+{
+  "test_id": "4.4",
+  "test_name": "Estados de Consolidación",
+  "nivel": 4,
+  "categoria": "Datos de Referencia",
+  "objetivo": "Verificar disponibilidad y contenido de la tabla de estados de consolidación",
+  "herramienta_mcp": "boe-mcp:get_auxiliary_table",
+  "timestamp_inicio": "2025-11-24T12:18:00Z",
+  "timestamp_fin": "2025-11-24T12:18:30Z",
+  "duracion_ms": 500,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "exitoso",
+  "score": 5.0,
+  "notas": "Tabla completa con 2 estados: Finalizado y Desactualizado."
+}

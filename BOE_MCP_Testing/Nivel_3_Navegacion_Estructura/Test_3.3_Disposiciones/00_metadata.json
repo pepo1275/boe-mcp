@@ -1,0 +1,16 @@
+{
+  "test_id": "3.3",
+  "test_name": "Obtener Disposiciones Adicionales",
+  "nivel": 3,
+  "categoria": "Navegación y Estructura",
+  "objetivo": "Verificar acceso a disposiciones adicionales, transitorias y finales",
+  "herramienta_mcp": "boe-mcp:get_law_section",
+  "timestamp_inicio": "2025-11-24T12:02:00Z",
+  "timestamp_fin": "2025-11-24T12:03:00Z",
+  "duracion_ms": 1500,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "fallido_parcial",
+  "score": 2.0,
+  "notas": "IDs de disposiciones del índice (da1, df1, dau1, dt1) no funcionan en la API de bloques. Posible inconsistencia entre índice y endpoint de bloques."
+}

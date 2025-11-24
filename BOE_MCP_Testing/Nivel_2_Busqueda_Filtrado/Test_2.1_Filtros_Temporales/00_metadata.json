@@ -1,0 +1,16 @@
+{
+  "test_id": "2.1",
+  "test_name": "Filtros Temporales (from_date, to_date)",
+  "nivel": 2,
+  "categoria": "Búsqueda y Filtrado",
+  "objetivo": "Verificar funcionamiento de filtros temporales from_date y to_date",
+  "herramienta_mcp": "boe-mcp:search_laws_list",
+  "timestamp_inicio": "2025-11-23T17:30:00Z",
+  "timestamp_fin": "2025-11-23T17:32:00Z",
+  "duracion_ms": 2100,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "exitoso",
+  "score": 4.0,
+  "notas": "Filtros funcionan pero aplican sobre fecha_actualizacion, no fecha_publicacion. Importante para usuarios."
+}

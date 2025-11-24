@@ -1,0 +1,16 @@
+{
+  "test_id": "2.3",
+  "test_name": "Búsqueda en Título vs Texto Completo",
+  "nivel": 2,
+  "categoria": "Búsqueda y Filtrado",
+  "objetivo": "Verificar diferencia entre búsqueda en título y texto completo",
+  "herramienta_mcp": "boe-mcp:search_laws_list",
+  "timestamp_inicio": "2025-11-23T17:38:00Z",
+  "timestamp_fin": "2025-11-23T17:39:00Z",
+  "duracion_ms": 2200,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "exitoso",
+  "score": 5.0,
+  "notas": "Parámetro search_in_title_only funciona correctamente. Diferencia clara entre resultados."
+}

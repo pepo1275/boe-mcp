@@ -1,0 +1,16 @@
+{
+  "test_id": "3.4",
+  "test_name": "Texto Completo Consolidado",
+  "nivel": 3,
+  "categoria": "Navegación y Estructura",
+  "objetivo": "Verificar obtención del texto completo consolidado de una norma",
+  "herramienta_mcp": "boe-mcp:get_law_section",
+  "timestamp_inicio": "2025-11-24T12:04:00Z",
+  "timestamp_fin": "2025-11-24T12:05:00Z",
+  "duracion_ms": 1200,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "fallido",
+  "score": 1.0,
+  "notas": "Section 'texto' no funciona. Sin embargo, section 'completa' incluye texto en el campo <texto> del XML."
+}

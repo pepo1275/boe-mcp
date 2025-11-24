@@ -1,0 +1,16 @@
+{
+  "test_id": "3.5",
+  "test_name": "Comparar Formatos XML vs JSON",
+  "nivel": 3,
+  "categoria": "Navegación y Estructura",
+  "objetivo": "Verificar disponibilidad y equivalencia de formatos XML y JSON",
+  "herramienta_mcp": "boe-mcp:get_law_section",
+  "timestamp_inicio": "2025-11-24T12:06:00Z",
+  "timestamp_fin": "2025-11-24T12:07:00Z",
+  "duracion_ms": 2000,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "parcial",
+  "score": 3.0,
+  "notas": "XML funciona para todas las secciones. JSON solo funciona para 'completa' y 'analisis'. Bloques solo en XML."
+}
