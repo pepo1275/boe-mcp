@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "boe-mcp": {
+      "command": "/Users/pepo/Dev/boe-mcp/venv/bin/python",
+      "args": ["-m", "boe_mcp.server"],
+      "env": {
+        "PYTHONPATH": "/Users/pepo/Dev/boe-mcp/src"
+      }
+    }
+  }
+}
