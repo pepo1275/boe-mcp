@@ -1,0 +1,11 @@
+{
+  "mcp_server": "boe-mcp",
+  "tool_name": "get_law_section",
+  "parameters": {
+    "identifier": "BOE-A-2015-10566",
+    "section": "metadatos",
+    "block_id": null,
+    "format": "xml"
+  },
+  "timestamp": "2025-11-23T16:18:00Z"
+}

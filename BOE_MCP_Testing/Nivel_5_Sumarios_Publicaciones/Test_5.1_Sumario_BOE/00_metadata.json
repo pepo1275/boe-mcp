@@ -1,0 +1,16 @@
+{
+  "test_id": "5.1",
+  "test_name": "Sumario BOE fecha específica",
+  "nivel": 5,
+  "categoria": "Sumarios y Publicaciones",
+  "objetivo": "Verificar la capacidad de obtener el sumario del BOE para una fecha específica",
+  "herramienta_mcp": "boe-mcp:get_boe_summary",
+  "timestamp_inicio": "2025-11-24T12:30:00Z",
+  "timestamp_fin": "2025-11-24T12:30:30Z",
+  "duracion_ms": 800,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "exitoso",
+  "score": 5.0,
+  "notas": "Sumario recuperado correctamente con estructura completa. Incluye metadatos, secciones, departamentos, items con URLs. Respuesta extensa pero completa."
+}

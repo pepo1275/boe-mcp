@@ -1,0 +1,16 @@
+{
+  "test_id": "4.5",
+  "test_name": "Relaciones Anteriores/Posteriores",
+  "nivel": 4,
+  "categoria": "Datos de Referencia",
+  "objetivo": "Verificar disponibilidad de las tablas de relaciones entre normas",
+  "herramienta_mcp": "boe-mcp:get_auxiliary_table",
+  "timestamp_inicio": "2025-11-24T12:19:00Z",
+  "timestamp_fin": "2025-11-24T12:19:30Z",
+  "duracion_ms": 500,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "exitoso",
+  "score": 5.0,
+  "notas": "Ambas tablas completas. Relaciones anteriores (acción activa) y posteriores (acción pasiva). Ej: DEROGA vs SE DEROGA."
+}

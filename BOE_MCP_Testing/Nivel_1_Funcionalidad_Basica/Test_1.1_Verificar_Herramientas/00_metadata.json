@@ -1,0 +1,16 @@
+{
+  "test_id": "1.1",
+  "test_name": "Verificar disponibilidad de herramientas",
+  "nivel": 1,
+  "categoria": "Funcionalidad Básica",
+  "objetivo": "Confirmar que el servidor boe-mcp está operativo y listar todas las herramientas disponibles",
+  "herramienta_mcp": "boe-mcp (análisis de código)",
+  "timestamp_inicio": "2025-11-23T15:42:23Z",
+  "timestamp_fin": "2025-11-23T15:43:00Z",
+  "duracion_ms": 37000,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Code (Claude Sonnet 4.5)",
+  "estado": "exitoso",
+  "score": 5,
+  "notas": "5 herramientas MCP identificadas correctamente mediante análisis de código fuente"
+}

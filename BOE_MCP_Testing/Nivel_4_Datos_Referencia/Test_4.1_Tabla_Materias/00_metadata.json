@@ -1,0 +1,16 @@
+{
+  "test_id": "4.1",
+  "test_name": "Tabla de Materias",
+  "nivel": 4,
+  "categoria": "Datos de Referencia",
+  "objetivo": "Verificar disponibilidad y contenido de la tabla de materias del vocabulario controlado",
+  "herramienta_mcp": "boe-mcp:get_auxiliary_table",
+  "timestamp_inicio": "2025-11-24T12:15:00Z",
+  "timestamp_fin": "2025-11-24T12:15:30Z",
+  "duracion_ms": 500,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "exitoso",
+  "score": 5.0,
+  "notas": "Tabla completa recuperada con más de 2300 códigos de materias. Respuesta JSON estructurada con código->descripción."
+}

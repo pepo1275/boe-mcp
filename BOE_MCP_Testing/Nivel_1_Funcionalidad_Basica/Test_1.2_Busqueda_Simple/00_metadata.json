@@ -1,0 +1,16 @@
+{
+  "test_id": "1.2",
+  "test_name": "Búsqueda simple por texto",
+  "nivel": 1,
+  "categoria": "Funcionalidad Básica",
+  "objetivo": "Búsqueda básica de una ley conocida (Ley 40/2015) sin filtros avanzados",
+  "herramienta_mcp": "boe-mcp:search_laws_list",
+  "timestamp_inicio": "2025-11-23T16:15:00Z",
+  "timestamp_fin": "2025-11-23T16:15:02Z",
+  "duracion_ms": 2000,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Code (Claude Sonnet 4.5)",
+  "estado": "exitoso",
+  "score": 5,
+  "notas": "Ley 40/2015 encontrada correctamente en primera posición con todos los metadatos esperados"
+}

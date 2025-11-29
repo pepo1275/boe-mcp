@@ -1,0 +1,7 @@
+{
+  "mcp_response": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<response>\n  <status>\n    <code>200</code>\n    <text>ok</text>\n  </status>\n  <data>\n    <metadatos>\n      <fecha_actualizacion>20251120T113850Z</fecha_actualizacion>\n      <identificador>BOE-A-2015-10566</identificador>\n      <ambito codigo=\"1\">Estatal</ambito>\n      <departamento codigo=\"7723\">Jefatura del Estado</departamento>\n      <rango codigo=\"1300\">Ley</rango>\n      <fecha_disposicion>20151001</fecha_disposicion>\n      <numero_oficial>40/2015</numero_oficial>\n      <titulo>Ley 40/2015, de 1 de octubre, de Régimen Jurídico del Sector Público.</titulo>\n      <diario>Boletín Oficial del Estado</diario>\n      <fecha_publicacion>20151002</fecha_publicacion>\n      <diario_numero>236</diario_numero>\n      <fecha_vigencia>20161002</fecha_vigencia>\n      <estatus_derogacion>N</estatus_derogacion>\n      <estatus_anulacion>N</estatus_anulacion>\n      <vigencia_agotada>N</vigencia_agotada>\n      <estado_consolidacion codigo=\"3\">Finalizado</estado_consolidacion>\n      <url_eli>https://www.boe.es/eli/es/l/2015/10/01/40</url_eli>\n      <url_html_consolidada>https://www.boe.es/buscar/act.php?id=BOE-A-2015-10566</url_html_consolidada>\n    </metadatos>\n  </data>\n</response>",
+  "http_status": 200,
+  "response_time_ms": 1800,
+  "response_size_bytes": 1247,
+  "format": "xml"
+}

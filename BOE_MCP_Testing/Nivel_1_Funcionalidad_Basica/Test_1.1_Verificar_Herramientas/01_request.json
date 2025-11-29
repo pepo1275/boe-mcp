@@ -1,0 +1,8 @@
+{
+  "mcp_server": "boe-mcp",
+  "method": "code_analysis",
+  "command": "grep -A2 '@mcp.tool' src/boe_mcp/server.py",
+  "parameters": {},
+  "timestamp": "2025-11-23T15:42:23Z",
+  "notes": "Análisis estático del código fuente para identificar herramientas MCP registradas"
+}

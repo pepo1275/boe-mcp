@@ -1,0 +1,16 @@
+{
+  "test_id": "1.3",
+  "test_name": "Obtener metadatos de una norma",
+  "nivel": 1,
+  "categoria": "Funcionalidad Básica",
+  "objetivo": "Recuperar información básica de la Ley 40/2015 (BOE-A-2015-10566)",
+  "herramienta_mcp": "boe-mcp:get_law_section",
+  "timestamp_inicio": "2025-11-23T16:18:00Z",
+  "timestamp_fin": "2025-11-23T16:18:02Z",
+  "duracion_ms": 1800,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Code (Claude Sonnet 4.5)",
+  "estado": "exitoso",
+  "score": 5,
+  "notas": "Metadatos XML completos con 17 campos incluyendo título, fechas, departamento, rango y estado de vigencia"
+}

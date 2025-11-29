@@ -1,0 +1,16 @@
+{
+  "test_id": "5.2",
+  "test_name": "Sumario BORME",
+  "nivel": 5,
+  "categoria": "Sumarios y Publicaciones",
+  "objetivo": "Verificar la capacidad de obtener el sumario del BORME para una fecha específica",
+  "herramienta_mcp": "boe-mcp:get_borme_summary",
+  "timestamp_inicio": "2025-11-24T12:31:00Z",
+  "timestamp_fin": "2025-11-24T12:31:30Z",
+  "duracion_ms": 750,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "exitoso",
+  "score": 5.0,
+  "notas": "Sumario BORME recuperado correctamente. Estructura similar a BOE: secciones (A: Actos inscritos, B: Otros actos, C: Avisos legales), items por provincia, con URLs PDF/HTML/XML."
+}

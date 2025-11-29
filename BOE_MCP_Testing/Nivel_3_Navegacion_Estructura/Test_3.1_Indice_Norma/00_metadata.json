@@ -1,0 +1,16 @@
+{
+  "test_id": "3.1",
+  "test_name": "Obtener Índice de Norma",
+  "nivel": 3,
+  "categoria": "Navegación y Estructura",
+  "objetivo": "Verificar obtención del índice estructurado de una norma",
+  "herramienta_mcp": "boe-mcp:get_law_section",
+  "timestamp_inicio": "2025-11-23T18:00:00Z",
+  "timestamp_fin": "2025-11-23T18:01:00Z",
+  "duracion_ms": 2500,
+  "device_id": "macbook-air-de-pepo_macos_pepo_001",
+  "ejecutor": "Claude Sonnet 4.5",
+  "estado": "exitoso",
+  "score": 5.0,
+  "notas": "Índice completo con estructura jerárquica. Incluye artículos, capítulos, secciones, disposiciones con IDs y URLs."
+}
