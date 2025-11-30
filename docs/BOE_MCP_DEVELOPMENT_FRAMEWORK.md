@@ -1,9 +1,546 @@
 # BOE-MCP Development Framework
 
-**Version**: 2.0.0
-**Date**: 2025-11-29
+**Version**: 2.1.0
+**Date**: 2025-11-30
 **Methodology**: RPVEA 2.0 Adapted
 **Philosophy**: Complete API Client, Zero Business Logic
+
+---
+
+## 0. API Factual Analysis (Audit 2025-11-30)
+
+> **Esta sección documenta el análisis exhaustivo de la API BOE vs el MCP actual.**
+> **Propósito**: Servir de referencia para implementación en futuras sesiones.
+
+### 0.1 Capacidades de la API para Fechas y Relaciones
+
+La API del BOE **SÍ proporciona** información completa para:
+- Fechas de vigencia, derogación, anulación
+- Relaciones entre normas (qué deroga a qué, qué modifica a qué)
+- Historial de versiones de artículos
+
+#### Campos de Fecha Disponibles
+
+| Campo | Endpoint | Descripción | Uso para Grafos/Temporal |
+|-------|----------|-------------|--------------------------|
+| `fecha_disposicion` | Lista + Metadatos | Fecha original de la norma | Ordenación cronológica |
+| `fecha_publicacion` | Lista + Metadatos | Cuándo se publicó en BOE | Timeline de publicaciones |
+| `fecha_vigencia` | Lista + Metadatos | Cuándo entró en vigor | **Clave para búsqueda temporal** |
+| `fecha_derogacion` | **Solo Metadatos** | Cuándo fue derogada | **Clave para validez temporal** |
+| `fecha_anulacion` | **Solo Metadatos** | Cuándo fue anulada | Estado legal |
+| `estatus_derogacion` | **Solo Metadatos** | S/N - ¿Está derogada? | Filtro rápido |
+| `estatus_anulacion` | **Solo Metadatos** | S/N - ¿Está anulada? | Filtro rápido |
+| `vigencia_agotada` | Lista | S/N - ¿Vigente? | Filtro de búsqueda |
+| `fecha_caducidad` | Bloque de texto | Caducidad de un bloque | Vigencia por artículo |
+
+#### Estructura de Relaciones (Endpoint `/analisis`)
+
+```xml
+<referencias>
+  <anteriores>  <!-- Esta norma AFECTA A normas anteriores -->
+    <anterior>
+      <id_norma>BOE-A-1989-14247</id_norma>
+      <relacion codigo="210">DEROGA</relacion>
+      <texto>Disposición derogatoria única</texto>
+    </anterior>
+  </anteriores>
+  <posteriores>  <!-- Normas posteriores AFECTAN A esta -->
+    <posterior>
+      <id_norma>BOE-A-2022-17040</id_norma>
+      <relacion codigo="420">SE MODIFICA</relacion>
+      <texto>el artículo 22, por art. 3 de...</texto>
+    </posterior>
+  </posteriores>
+</referencias>
+```
+
+#### Códigos de Relaciones (Tablas Auxiliares)
+
+| Tipo | Tabla | Códigos Ejemplo | Significado |
+|------|-------|-----------------|-------------|
+| **Anteriores** | `relaciones-anteriores` | 210=DEROGA, 212=MODIFICA, 221=ANULA | Esta norma → afecta a otras |
+| **Posteriores** | `relaciones-posteriores` | 406=SE DEROGA, 420=SE MODIFICA, 407=SE AÑADE | Otras normas → afectan a esta |
+
+#### Versiones Históricas en Bloques
+
+```xml
+<bloque id="a22" tipo="precepto" titulo="Artículo 22">
+  <version id_norma="BOE-A-1995-25444" fecha_publicacion="19951124" fecha_vigencia="19960524">
+    <!-- Versión original -->
+  </version>
+  <version id_norma="BOE-A-2022-17040" fecha_publicacion="20221015" fecha_vigencia="20221016">
+    <!-- Versión modificada -->
+  </version>
+</bloque>
+```
+
+### 0.2 Cobertura Actual: Endpoints
+
+| Endpoint API | Tool MCP Actual | Estado |
+|-------------|-----------------|--------|
+| `/legislacion-consolidada` | `search_laws_list` | ✅ Implementado (parcial) |
+| `/legislacion-consolidada/id/{id}` | `get_law_section("completa")` | ✅ Implementado |
+| `/legislacion-consolidada/id/{id}/metadatos` | `get_law_section("metadatos")` | ✅ Implementado |
+| `/legislacion-consolidada/id/{id}/analisis` | `get_law_section("analisis")` | ✅ Implementado |
+| `/legislacion-consolidada/id/{id}/metadata-eli` | `get_law_section("metadata-eli")` | ✅ Implementado |
+| `/legislacion-consolidada/id/{id}/texto` | `get_law_section("texto")` | ✅ Implementado |
+| `/legislacion-consolidada/id/{id}/texto/indice` | `get_law_section("indice")` | ✅ Implementado |
+| `/legislacion-consolidada/id/{id}/texto/bloque/{id}` | `get_law_section("bloque")` | ✅ Implementado |
+| `/boe/sumario/{fecha}` | `get_boe_summary` | ✅ Implementado |
+| `/borme/sumario/{fecha}` | `get_borme_summary` | ✅ Implementado |
+| `/datos-auxiliares/{tabla}` | `get_auxiliary_table` | ✅ Implementado |
+
+**Conclusión**: Todos los endpoints están mapeados. El problema está en los **parámetros de búsqueda**.
+
+### 0.3 Gaps Críticos: Parámetros de Búsqueda
+
+| Campo API | En `search_laws_list` | Forma de Acceso Actual |
+|-----------|----------------------|------------------------|
+| `from` / `to` | ✅ Sí | Parámetros directos |
+| `offset` / `limit` | ✅ Sí | Parámetros directos |
+| `titulo` | ✅ Sí | Via `query_value` + `search_in_title_only` |
+| `texto` | ✅ Sí | Via `query_value` + `search_in_title_only=False` |
+| `vigencia_agotada` | ⚠️ Parcial | Via `solo_vigente` (hardcoded "N") |
+| `estado_consolidacion@codigo` | ⚠️ Parcial | Via `solo_consolidada` (hardcoded "3") |
+| `ambito@codigo` | ⚠️ Parcial | Via `ambito` enum (no código directo) |
+| **`departamento@codigo`** | ❌ **GAP** | Solo via `must` dict genérico |
+| **`rango@codigo`** | ❌ **GAP** | Solo via `must` dict genérico |
+| **`materia@codigo`** | ❌ **GAP** | Solo via `must` dict genérico |
+| **`numero_oficial`** | ❌ **GAP** | No expuesto |
+| **`fecha_disposicion`** | ❌ **GAP** | No expuesto |
+| **`fecha_publicacion` (range)** | ⚠️ Parcial | Solo via `range_filters` dict |
+| **`diario_numero`** | ❌ **GAP** | No expuesto |
+
+---
+
+## 0.4 GAPS DETALLADOS: Impacto y Casos de Uso
+
+### GAP 1: `departamento@codigo` - Filtro por Ministerio/Departamento
+
+**Estado actual**: Solo accesible via parámetro genérico `must={"departamento@codigo": "5140"}`
+
+**Problema**:
+- El usuario debe conocer el formato exacto del campo
+- No hay validación del código
+- No es descubrible por el LLM
+
+**Impacto de solucionarlo**:
+
+| Aspecto | Sin solucionar | Con solución |
+|---------|----------------|--------------|
+| Usabilidad | Requiere conocer sintaxis interna | Parámetro claro `departamento_codigo="5140"` |
+| Validación | Ninguna | Validar que código existe en tabla auxiliar |
+| Descubrimiento | El LLM no sabe que existe | Documentado en docstring |
+
+**Casos de uso habilitados**:
+
+```python
+# CASO 1: Buscar todas las leyes del Ministerio de Hacienda
+search_laws(departamento_codigo="5140", rango_codigo="1300")
+# → Permite análisis de producción normativa por ministerio
+
+# CASO 2: Monitoring de departamento específico
+search_laws(departamento_codigo="9562", from_date="20240101")
+# → Alertas de nuevas normas de Asuntos Exteriores
+
+# CASO 3: Comparativa inter-ministerial
+# Consultar varios departamentos para análisis comparativo
+```
+
+**Implementación propuesta**:
+```python
+departamento_codigo: str | None = None,  # Código del departamento emisor (ver get_auxiliary_table("departamentos"))
+```
+
+---
+
+### GAP 2: `rango@codigo` - Filtro por Tipo de Norma
+
+**Estado actual**: Solo accesible via `must={"rango@codigo": "1300"}`
+
+**Problema**:
+- Crítico para búsquedas especializadas
+- Los códigos no son intuitivos (1300=Ley, 1310=LO, 1200=RD, 1240=RDL)
+
+**Impacto de solucionarlo**:
+
+| Aspecto | Sin solucionar | Con solución |
+|---------|----------------|--------------|
+| Precisión | Mezcla de tipos normativos | Solo el tipo solicitado |
+| Volumen | Resultados innecesarios | Reducción significativa |
+| Relevancia | Baja para casos específicos | Alta |
+
+**Casos de uso habilitados**:
+
+```python
+# CASO 1: Solo Leyes Orgánicas vigentes
+search_laws(rango_codigo="1310", vigencia_agotada="N")
+# → Catálogo de derechos fundamentales
+
+# CASO 2: Reales Decretos-ley del último año (legislación de urgencia)
+search_laws(rango_codigo="1240", fecha_publicacion_desde="20240101")
+# → Análisis de uso de legislación de urgencia
+
+# CASO 3: Órdenes ministeriales de un departamento
+search_laws(rango_codigo="1650", departamento_codigo="5140")
+# → Normativa administrativa de desarrollo
+
+# CASO 4: Construcción de grafo jerárquico
+# Ley → Real Decreto de desarrollo → Órdenes ministeriales
+# Requiere poder filtrar por rango para cada nivel
+```
+
+**Implementación propuesta**:
+```python
+rango_codigo: str | None = None,  # Código del rango normativo (1300=Ley, 1310=LO, 1200=RD, 1240=RDL, ver get_auxiliary_table("rangos"))
+```
+
+---
+
+### GAP 3: `materia@codigo` - Filtro por Temática
+
+**Estado actual**: Solo accesible via `must={"materia@codigo": "6658"}`
+
+**Problema**:
+- La tabla de materias tiene ~3000 códigos
+- Es el filtro temático principal de la API
+- Sin él, las búsquedas textuales son imprecisas
+
+**Impacto de solucionarlo**:
+
+| Aspecto | Sin solucionar | Con solución |
+|---------|----------------|--------------|
+| Precisión temática | Depende de palabras clave | Clasificación oficial BOE |
+| Exhaustividad | Puede perder normas relevantes | Cobertura completa por tema |
+| Ruido | Alto (falsos positivos) | Bajo |
+
+**Casos de uso habilitados**:
+
+```python
+# CASO 1: Toda la normativa de protección de datos
+search_laws(materia_codigo="4915")  # Protección de datos personales
+# → Base para compliance RGPD
+
+# CASO 2: Legislación laboral vigente
+search_laws(materia_codigo="7023", vigencia_agotada="N")  # Relaciones laborales
+# → Catálogo para departamento de RRHH
+
+# CASO 3: Normativa medioambiental por comunidad autónoma
+search_laws(materia_codigo="5949", ambito_codigo="2")  # Medio ambiente + Autonómico
+# → Análisis de transposición de directivas por CCAA
+
+# CASO 4: Grafo de materias relacionadas
+# Una ley puede tener múltiples materias → red de conexiones temáticas
+```
+
+**Implementación propuesta**:
+```python
+materia_codigo: str | None = None,  # Código de materia temática (ver get_auxiliary_table("materias"))
+```
+
+---
+
+### GAP 4: `numero_oficial` - Búsqueda por Número de Ley
+
+**Estado actual**: No expuesto en absoluto
+
+**Problema**:
+- El caso de uso más común: "buscar la Ley 39/2015"
+- Actualmente requiere búsqueda textual en título (imprecisa)
+- `numero_oficial` es un campo indexado en la API
+
+**Impacto de solucionarlo**:
+
+| Aspecto | Sin solucionar | Con solución |
+|---------|----------------|--------------|
+| Búsqueda directa | Imposible | `numero_oficial="39/2015"` |
+| Precisión | Falsos positivos por título | Exactitud 100% |
+| Velocidad | Búsqueda full-text | Búsqueda indexada |
+
+**Casos de uso habilitados**:
+
+```python
+# CASO 1: Buscar ley específica por número
+search_laws(numero_oficial="39/2015")
+# → Ley 39/2015 de Procedimiento Administrativo
+
+# CASO 2: Verificar existencia de norma citada
+search_laws(numero_oficial="40/2015", rango_codigo="1300")
+# → Validar referencias en documentos legales
+
+# CASO 3: Buscar Real Decreto específico
+search_laws(numero_oficial="203/2021", rango_codigo="1200")
+# → RD 203/2021 (Reglamento de actuación de la Administración)
+
+# CASO 4: Resolver referencias cruzadas en grafo
+# Una norma cita "Ley 30/1992" → búsqueda directa para obtener BOE-ID
+```
+
+**Implementación propuesta**:
+```python
+numero_oficial: str | None = None,  # Número oficial de la norma (ej: "39/2015", "1/2023")
+```
+
+---
+
+### GAP 5: `fecha_disposicion` - Fecha Original de la Norma
+
+**Estado actual**: No expuesto como filtro de rango
+
+**Problema**:
+- Diferente de `fecha_publicacion` (puede haber días/semanas de diferencia)
+- Importante para búsquedas históricas precisas
+- Crítico para determinar "qué norma existía en fecha X"
+
+**Impacto de solucionarlo**:
+
+| Aspecto | Sin solucionar | Con solución |
+|---------|----------------|--------------|
+| Precisión temporal | Solo por publicación | Por fecha real de la norma |
+| Búsquedas históricas | Imprecisas | Exactas |
+| Grafos temporales | Basados en publicación | Basados en disposición real |
+
+**Casos de uso habilitados**:
+
+```python
+# CASO 1: Normas dictadas en un período legislativo
+search_laws(
+    fecha_disposicion_desde="20191203",  # Inicio XIV Legislatura
+    fecha_disposicion_hasta="20231127"   # Fin XIV Legislatura
+)
+# → Producción normativa de una legislatura
+
+# CASO 2: Respuesta a crisis (fechas exactas de disposición)
+search_laws(
+    fecha_disposicion_desde="20200314",  # Estado de alarma COVID
+    fecha_disposicion_hasta="20200321",
+    rango_codigo="1240"  # Reales Decretos-ley
+)
+# → Normativa de urgencia en primera semana de pandemia
+
+# CASO 3: Timeline preciso para grafo temporal
+# La fecha de disposición es cuando "nace" la norma jurídicamente
+```
+
+**Implementación propuesta**:
+```python
+fecha_disposicion_desde: str | None = None,  # Fecha disposición mínima (AAAAMMDD)
+fecha_disposicion_hasta: str | None = None,  # Fecha disposición máxima (AAAAMMDD)
+```
+
+---
+
+### GAP 6: `diario_numero` - Número del BOE
+
+**Estado actual**: No expuesto
+
+**Problema**:
+- Necesario para referenciar publicaciones específicas del BOE
+- Útil para verificar citas bibliográficas legales
+- Permite acceso a sumarios específicos
+
+**Impacto de solucionarlo**:
+
+| Aspecto | Sin solucionar | Con solución |
+|---------|----------------|--------------|
+| Referencias | Solo por fecha | Por número exacto de BOE |
+| Verificación | Imposible verificar citas | Verificación directa |
+| Correlación | Manual | Automática con sumarios |
+
+**Casos de uso habilitados**:
+
+```python
+# CASO 1: Todas las disposiciones de un BOE concreto
+search_laws(diario_numero="130")
+# → Contenido normativo del BOE-130
+
+# CASO 2: Verificar cita legal
+# Cita: "BOE núm. 236, de 1 de octubre de 2015"
+search_laws(diario_numero="236", fecha_publicacion_desde="20151001", fecha_publicacion_hasta="20151001")
+# → Confirmar existencia y obtener identificador
+
+# CASO 3: Correlacionar con sumario
+# get_boe_summary devuelve diario_numero → usar para búsqueda detallada
+```
+
+**Implementación propuesta**:
+```python
+diario_numero: int | None = None,  # Número del BOE
+```
+
+---
+
+### 0.5 Resumen de Implementación de Gaps
+
+| Gap | Prioridad | Esfuerzo | Casos de Uso Principales |
+|-----|-----------|----------|--------------------------|
+| `rango_codigo` | 🔴 Alta | Bajo | Filtro por tipo de norma, grafos jerárquicos |
+| `materia_codigo` | 🔴 Alta | Bajo | Búsquedas temáticas, compliance |
+| `numero_oficial` | 🔴 Alta | Bajo | Búsqueda directa de normas citadas |
+| `departamento_codigo` | 🟡 Media | Bajo | Análisis por ministerio, monitoring |
+| `fecha_disposicion` | 🟡 Media | Bajo | Búsquedas históricas precisas |
+| `diario_numero` | 🟢 Baja | Bajo | Verificación de citas, correlación sumarios |
+
+**Esfuerzo total estimado**: 1-2 horas (son parámetros simples que se añaden a la query)
+
+### 0.6 Lo que NO Necesita Implementación (Ya Funciona)
+
+| Capacidad | Cómo acceder | Tool |
+|-----------|--------------|------|
+| Obtener fecha de derogación de una norma | Campo `fecha_derogacion` en respuesta | `get_law_section("metadatos")` |
+| Ver qué normas deroga/modifica una ley | `referencias.anteriores` en respuesta | `get_law_section("analisis")` |
+| Ver qué normas han modificado una ley | `referencias.posteriores` en respuesta | `get_law_section("analisis")` |
+| Historial de versiones de un artículo | `version[]` en bloque | `get_law_section("bloque", block_id)` |
+| Códigos de tipos de relaciones | Tabla completa | `get_auxiliary_table("relaciones-anteriores/posteriores")` |
+
+**Conclusión**: El MCP ya expone los datos necesarios para construir grafos y hacer búsquedas temporales. Solo falta mejorar los parámetros de búsqueda para facilitar el acceso.
+
+---
+
+## 0.7 Metodología de Validación: Triple Validación
+
+> **RPVEA 2.0 - Fase V (Validación) Ampliada**
+>
+> Antes de hacer merge de cualquier cambio en el MCP, se debe completar la **Triple Validación**.
+
+### Niveles de Validación
+
+| Nivel | Nombre | Qué Valida | Herramienta | Cuándo Falla |
+|-------|--------|------------|-------------|--------------|
+| **V1** | API Directa | Los campos/endpoints existen en la API | `curl` | Estamos usando campos que no existen |
+| **V2** | MCP Local | El código MCP genera queries correctas | Script Python import | Bug en construcción de query |
+| **V3** | MCP End-to-End | El MCP funciona como servidor real | MCP Client SDK | Error de protocolo o serialización |
+
+### V1 - Validación de API Directa
+
+Probar directamente contra la API del BOE sin pasar por el MCP:
+
+```bash
+# Ejemplo: Validar que rango@codigo funciona
+curl -s "https://www.boe.es/datosabiertos/api/legislacion-consolidada?limit=3&query=%7B%22query%22%3A%7B%22query_string%22%3A%7B%22query%22%3A%22rango%40codigo%3A%5C%221300%5C%22%22%7D%7D%7D" \
+  -H "Accept: application/json" | python3 -m json.tool | head -30
+```
+
+**Criterio de éxito**: La API devuelve resultados filtrados correctamente.
+
+### V2 - Validación de MCP Local
+
+Importar la función directamente y probar que genera las queries correctas:
+
+```python
+# tests/test_v110_validation.py
+import asyncio
+from boe_mcp.server import search_laws_list
+
+async def test_rango_codigo():
+    result = await search_laws_list(rango_codigo="1300", limit=3)
+
+    # Verificar query generada
+    query_str = result.get("params", {}).get("query", "")
+    assert 'rango@codigo:"1300"' in query_str
+
+    # Verificar resultados
+    data = result.get("data", {}).get("data", [])
+    assert all(item["rango"]["codigo"] == "1300" for item in data)
+```
+
+**Criterio de éxito**:
+- La query JSON contiene los filtros correctos
+- Los resultados cumplen el filtro solicitado
+
+### V3 - Validación End-to-End
+
+Usar el MCP Client SDK para llamar al servidor como un cliente real:
+
+```python
+# tests/test_v3_e2e.py
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def test_e2e():
+    server_params = StdioServerParameters(
+        command=".venv/bin/python",
+        args=["-m", "boe_mcp.server"],
+        env={"PYTHONPATH": "src"}
+    )
+
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # Verificar que los nuevos parámetros aparecen en el schema
+            tools = await session.list_tools()
+            search_tool = next(t for t in tools.tools if t.name == "search_laws_list")
+            assert "rango_codigo" in search_tool.inputSchema["properties"]
+
+            # Llamar al tool
+            result = await session.call_tool(
+                "search_laws_list",
+                arguments={"rango_codigo": "1300", "limit": 2}
+            )
+            # Verificar resultado...
+```
+
+**Criterio de éxito**:
+- Los nuevos parámetros aparecen en el schema MCP
+- Las llamadas al tool funcionan correctamente
+- Los resultados son correctos
+
+### Flujo de Validación Recomendado
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    FLUJO TRIPLE VALIDACIÓN                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1. Implementar cambio en server.py                             │
+│         │                                                       │
+│         ▼                                                       │
+│  2. V1: Probar API directamente (curl)                          │
+│         │                                                       │
+│         ├── FALLA → Revisar documentación API                   │
+│         │                                                       │
+│         ▼ PASA                                                  │
+│  3. V2: Ejecutar tests locales                                  │
+│         │                                                       │
+│         ├── FALLA → Bug en código, corregir                     │
+│         │                                                       │
+│         ▼ PASA                                                  │
+│  4. V3: Ejecutar test end-to-end                                │
+│         │                                                       │
+│         ├── FALLA → Problema protocolo/serialización            │
+│         │                                                       │
+│         ▼ PASA                                                  │
+│  5. ✅ Listo para commit y PR                                   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Comandos de Validación
+
+```bash
+# V1 - API Directa (manual, ver ejemplos arriba)
+
+# V2 - MCP Local
+.venv/bin/python tests/test_v110_validation.py
+
+# V3 - End-to-End
+.venv/bin/python tests/test_v3_e2e.py
+
+# Todos los tests
+.venv/bin/python -m pytest tests/ -v
+```
+
+### Registro de Validaciones
+
+Cada PR debe incluir en su descripción:
+
+```markdown
+## Validación
+- [x] V1: API directa verificada
+- [x] V2: Tests locales pasan (X/X)
+- [x] V3: Test end-to-end pasa
+```
 
 ---
 

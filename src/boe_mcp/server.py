@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import Any, Literal, Union, Annotated
 import httpx
 import logging
@@ -15,6 +16,10 @@ mcp = FastMCP(
 
 BOE_API_BASE = "https://www.boe.es"
 USER_AGENT = "boe-mcp-client/1.0"
+
+# v1.2.0: Constantes para autocompletado de rangos de fecha
+# La API BOE requiere AMBOS límites (gte Y lte) para que el filtro range funcione
+FECHA_MINIMA_DEFAULT = "19780101"  # Constitución Española - fecha mínima razonable
 
 async def make_boe_request(
     endpoint: str,
@@ -77,7 +82,7 @@ async def make_boe_raw_request(endpoint: str, accept: str = "application/xml") -
 
 @mcp.tool()
 async def search_laws_list(
-    
+
     from_date: str | None = None,
     to_date: str | None = None,
     offset: int | None = 0,
@@ -90,6 +95,23 @@ async def search_laws_list(
     solo_consolidada: bool = False,
 
     ambito: Literal["Estatal", "Autonómico", "Europeo"] | None = None,
+
+    # v1.1.0 - Nuevos parámetros de filtro directo
+    rango_codigo: str | None = None,
+    materia_codigo: str | None = None,
+    numero_oficial: str | None = None,
+
+    # v1.2.0 - Filtros de rango por fecha (requieren ambos límites, se autocompletan)
+    fecha_publicacion_desde: str | None = None,
+    fecha_publicacion_hasta: str | None = None,
+    fecha_disposicion_desde: str | None = None,
+    fecha_disposicion_hasta: str | None = None,
+
+    # v1.2.0 - Ordenamiento simplificado
+    ordenar_por: Literal["fecha_disposicion", "fecha_publicacion", "titulo"] | None = None,
+    ordenar_direccion: Literal["asc", "desc"] = "desc",
+
+    # Parámetros avanzados (mantener compatibilidad)
     must: dict[str, str] | None = None,
     should: dict[str, str] | None = None,
     must_not: dict[str, str] | None = None,
@@ -97,13 +119,15 @@ async def search_laws_list(
     sort_by: list[dict] | None = None,
 
 ) -> Union[dict, str]:
-    
+
     """
     Búsqueda avanzada de normas del BOE.
 
     Args:
-        -from_date: Fecha mínima (AAAAMMDD).
-        -to_date: Fecha máxima (AAAAMMDD).
+        -from_date: Filtra por fecha de ACTUALIZACIÓN en el sistema (AAAAMMDD).
+            NOTA: Este parámetro NO filtra por fecha de publicación ni disposición.
+            Es útil para encontrar normas recientemente actualizadas en la base de datos.
+        -to_date: Fecha máxima de actualización (AAAAMMDD). Ver nota de from_date.
         -offset: Índice inicial. Es obligatorio incluírlo en la llamada a la función.
         -limit: Máximo de resultados (-1 para todos).
 
@@ -114,11 +138,34 @@ async def search_laws_list(
         -solo_consolidada: true para buscar solamente normas consolidadas (False por defecto).
 
         -ambito: Filtra por ámbito ('Estatal', 'Autonómico', 'Europeo').
-        -must: Condiciones que deben cumplirse (and).
-        -should: Condiciones opcionales (or).
-        -must_not: Condiciones excluidas (not).
-        -range_filters: Filtros por fechas.
-        -sort_by: Ordenamiento personalizado.
+
+        -rango_codigo: Código del rango normativo. Ejemplos: 1300=Ley, 1290=Ley Orgánica,
+            1340=Real Decreto, 1320=Real Decreto-ley, 1350=Orden.
+            Ver get_auxiliary_table("rangos") para lista completa.
+        -materia_codigo: Código de materia temática para filtrar por tema.
+            Ver get_auxiliary_table("materias") para lista completa (~3000 códigos).
+        -numero_oficial: Número oficial de la norma (ej: "39/2015", "1/2023").
+            Permite búsqueda exacta por número de ley/decreto.
+
+        -fecha_publicacion_desde: Fecha mínima de publicación en BOE (AAAAMMDD).
+            Si se especifica sin fecha_publicacion_hasta, se autocompleta hasta hoy.
+        -fecha_publicacion_hasta: Fecha máxima de publicación en BOE (AAAAMMDD).
+            Si se especifica sin fecha_publicacion_desde, se autocompleta desde 19780101.
+        -fecha_disposicion_desde: Fecha mínima de la disposición/norma (AAAAMMDD).
+            Si se especifica sin fecha_disposicion_hasta, se autocompleta hasta hoy.
+        -fecha_disposicion_hasta: Fecha máxima de la disposición/norma (AAAAMMDD).
+            Si se especifica sin fecha_disposicion_desde, se autocompleta desde 19780101.
+
+        -ordenar_por: Campo por el que ordenar ('fecha_disposicion', 'fecha_publicacion', 'titulo').
+        -ordenar_direccion: Dirección del ordenamiento ('asc' o 'desc', por defecto 'desc').
+
+        -must: Condiciones adicionales que deben cumplirse (and). Parámetro avanzado.
+        -should: Condiciones opcionales (or). Parámetro avanzado.
+        -must_not: Condiciones excluidas (not). Parámetro avanzado.
+        -range_filters: Filtros por fechas en formato raw. Parámetro avanzado.
+            Prefiera usar fecha_publicacion_* y fecha_disposicion_* en su lugar.
+        -sort_by: Ordenamiento personalizado en formato raw. Parámetro avanzado.
+            Prefiera usar ordenar_por y ordenar_direccion en su lugar.
     """
 
     endpoint = "/datosabiertos/api/legislacion-consolidada"
@@ -134,22 +181,61 @@ async def search_laws_list(
     if limit:
         params["limit"] = limit
 
-    if (query_value or ambito or must or should or must_not or range_filters or sort_by):
+    # v1.2.0: Incluir todos los parámetros que requieren objeto query
+    has_query_params = (
+        query_value or ambito or must or should or must_not or range_filters or sort_by
+        or rango_codigo or materia_codigo or numero_oficial
+        or fecha_publicacion_desde or fecha_publicacion_hasta
+        or fecha_disposicion_desde or fecha_disposicion_hasta
+        or ordenar_por
+    )
 
-        #logger.info(f"entra en querie. query_value: {query_value}")
+    if has_query_params:
 
         # Construcción del objeto query según especificación BOE con tipos explícitos
         query_obj_def: dict[str, Any] = {"query": {}}
-        
-        # ⏳ Rango por fechas
-        if range_filters:
-            query_obj_def["query"]["range"] = range_filters
 
-        # 📥 Ordenamiento
-        if sort_by:
+        # v1.2.0: Fecha actual dinámica para autocompletado
+        fecha_hoy = datetime.now().strftime("%Y%m%d")
+
+        # ⏳ v1.2.0: Filtros de rango por fecha con autocompletado
+        # IMPORTANTE: La API BOE requiere AMBOS límites (gte Y lte) para que funcione
+        if fecha_publicacion_desde or fecha_publicacion_hasta:
+            if "range" not in query_obj_def["query"]:
+                query_obj_def["query"]["range"] = {}
+            query_obj_def["query"]["range"]["fecha_publicacion"] = {
+                "gte": fecha_publicacion_desde or FECHA_MINIMA_DEFAULT,
+                "lte": fecha_publicacion_hasta or fecha_hoy
+            }
+
+        if fecha_disposicion_desde or fecha_disposicion_hasta:
+            if "range" not in query_obj_def["query"]:
+                query_obj_def["query"]["range"] = {}
+            query_obj_def["query"]["range"]["fecha_disposicion"] = {
+                "gte": fecha_disposicion_desde or FECHA_MINIMA_DEFAULT,
+                "lte": fecha_disposicion_hasta or fecha_hoy
+            }
+
+        # ⏳ Rango por fechas (parámetro avanzado legacy)
+        if range_filters:
+            if "range" not in query_obj_def["query"]:
+                query_obj_def["query"]["range"] = {}
+            query_obj_def["query"]["range"].update(range_filters)
+
+        # 📥 v1.2.0: Ordenamiento simplificado
+        if ordenar_por:
+            query_obj_def["sort"] = [{ordenar_por: ordenar_direccion}]
+        elif sort_by:
+            # Parámetro avanzado legacy
             query_obj_def["sort"] = sort_by
 
-        if (query_value or ambito or must or should or must_not):
+        # v1.1.0: Incluir nuevos filtros en la condición
+        has_clauses = (
+            query_value or ambito or must or should or must_not
+            or rango_codigo or materia_codigo or numero_oficial
+        )
+
+        if has_clauses:
             # 1. Query String (condiciones principales)
             query_string = {}
             clauses = []
@@ -164,16 +250,16 @@ async def search_laws_list(
             # ✅ Vigencia
             if solo_vigente:
                 clauses.append("vigencia_agotada:\"N\"")
-            
+
             # 📄 Estado de consolidación
             estado_map = {
-                "Consolidada": "3", 
-                "Parcial": "2", 
+                "Consolidada": "3",
+                "Parcial": "2",
                 "No consolidada": "1"
             }
             if solo_consolidada:
                 clauses.append(f"estado_consolidacion@codigo:{estado_map['Consolidada']}")
-            
+
             # 🌐 Filtro de ámbito
             # Mapeo de códigos de ámbito para la API del BOE
             ambito_map = {
@@ -183,7 +269,19 @@ async def search_laws_list(
             }
             if ambito:
                 clauses.append(f'ambito@codigo:"{ambito_map.get(ambito)}"')
-            
+
+            # 📋 v1.1.0: Filtro por rango normativo (Ley, RD, LO, etc.)
+            if rango_codigo:
+                clauses.append(f'rango@codigo:"{rango_codigo}"')
+
+            # 🏷️ v1.1.0: Filtro por materia temática
+            if materia_codigo:
+                clauses.append(f'materia@codigo:"{materia_codigo}"')
+
+            # 🔢 v1.1.0: Filtro por número oficial de norma
+            if numero_oficial:
+                clauses.append(f'numero_oficial:"{numero_oficial}"')
+
             # 🧱 Condiciones adicionales
             for cond_type, operator in [("must", "and"), ("should", "or")]:
                 if locals().get(cond_type):
@@ -191,11 +289,11 @@ async def search_laws_list(
                         f"{k}:{v}" for k, v in locals()[cond_type].items()
                     )
                     clauses.append(f"({cond_clause})")
-            
+
             # 🚫 Exclusiones
             if must_not:
                 clauses.extend(f"not {k}:{v}" for k, v in must_not.items())
-            
+
             if clauses:
                 query_string["query"] = " and ".join(clauses)
                 query_obj_def["query"]["query_string"] = query_string
