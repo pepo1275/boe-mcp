@@ -77,7 +77,7 @@ async def make_boe_raw_request(endpoint: str, accept: str = "application/xml") -
 
 @mcp.tool()
 async def search_laws_list(
-    
+
     from_date: str | None = None,
     to_date: str | None = None,
     offset: int | None = 0,
@@ -90,6 +90,12 @@ async def search_laws_list(
     solo_consolidada: bool = False,
 
     ambito: Literal["Estatal", "Autonómico", "Europeo"] | None = None,
+
+    # v1.1.0 - Nuevos parámetros de filtro directo
+    rango_codigo: str | None = None,
+    materia_codigo: str | None = None,
+    numero_oficial: str | None = None,
+
     must: dict[str, str] | None = None,
     should: dict[str, str] | None = None,
     must_not: dict[str, str] | None = None,
@@ -97,7 +103,7 @@ async def search_laws_list(
     sort_by: list[dict] | None = None,
 
 ) -> Union[dict, str]:
-    
+
     """
     Búsqueda avanzada de normas del BOE.
 
@@ -114,7 +120,16 @@ async def search_laws_list(
         -solo_consolidada: true para buscar solamente normas consolidadas (False por defecto).
 
         -ambito: Filtra por ámbito ('Estatal', 'Autonómico', 'Europeo').
-        -must: Condiciones que deben cumplirse (and).
+
+        -rango_codigo: Código del rango normativo. Ejemplos: 1300=Ley, 1290=Ley Orgánica,
+            1340=Real Decreto, 1320=Real Decreto-ley, 1350=Orden.
+            Ver get_auxiliary_table("rangos") para lista completa.
+        -materia_codigo: Código de materia temática para filtrar por tema.
+            Ver get_auxiliary_table("materias") para lista completa (~3000 códigos).
+        -numero_oficial: Número oficial de la norma (ej: "39/2015", "1/2023").
+            Permite búsqueda exacta por número de ley/decreto.
+
+        -must: Condiciones adicionales que deben cumplirse (and).
         -should: Condiciones opcionales (or).
         -must_not: Condiciones excluidas (not).
         -range_filters: Filtros por fechas.
@@ -134,7 +149,13 @@ async def search_laws_list(
     if limit:
         params["limit"] = limit
 
-    if (query_value or ambito or must or should or must_not or range_filters or sort_by):
+    # v1.1.0: Incluir nuevos parámetros en la condición de entrada
+    has_query_params = (
+        query_value or ambito or must or should or must_not or range_filters or sort_by
+        or rango_codigo or materia_codigo or numero_oficial
+    )
+
+    if has_query_params:
 
         #logger.info(f"entra en querie. query_value: {query_value}")
 
@@ -149,7 +170,13 @@ async def search_laws_list(
         if sort_by:
             query_obj_def["sort"] = sort_by
 
-        if (query_value or ambito or must or should or must_not):
+        # v1.1.0: Incluir nuevos filtros en la condición
+        has_clauses = (
+            query_value or ambito or must or should or must_not
+            or rango_codigo or materia_codigo or numero_oficial
+        )
+
+        if has_clauses:
             # 1. Query String (condiciones principales)
             query_string = {}
             clauses = []
@@ -164,16 +191,16 @@ async def search_laws_list(
             # ✅ Vigencia
             if solo_vigente:
                 clauses.append("vigencia_agotada:\"N\"")
-            
+
             # 📄 Estado de consolidación
             estado_map = {
-                "Consolidada": "3", 
-                "Parcial": "2", 
+                "Consolidada": "3",
+                "Parcial": "2",
                 "No consolidada": "1"
             }
             if solo_consolidada:
                 clauses.append(f"estado_consolidacion@codigo:{estado_map['Consolidada']}")
-            
+
             # 🌐 Filtro de ámbito
             # Mapeo de códigos de ámbito para la API del BOE
             ambito_map = {
@@ -183,7 +210,19 @@ async def search_laws_list(
             }
             if ambito:
                 clauses.append(f'ambito@codigo:"{ambito_map.get(ambito)}"')
-            
+
+            # 📋 v1.1.0: Filtro por rango normativo (Ley, RD, LO, etc.)
+            if rango_codigo:
+                clauses.append(f'rango@codigo:"{rango_codigo}"')
+
+            # 🏷️ v1.1.0: Filtro por materia temática
+            if materia_codigo:
+                clauses.append(f'materia@codigo:"{materia_codigo}"')
+
+            # 🔢 v1.1.0: Filtro por número oficial de norma
+            if numero_oficial:
+                clauses.append(f'numero_oficial:"{numero_oficial}"')
+
             # 🧱 Condiciones adicionales
             for cond_type, operator in [("must", "and"), ("should", "or")]:
                 if locals().get(cond_type):
@@ -191,11 +230,11 @@ async def search_laws_list(
                         f"{k}:{v}" for k, v in locals()[cond_type].items()
                     )
                     clauses.append(f"({cond_clause})")
-            
+
             # 🚫 Exclusiones
             if must_not:
                 clauses.extend(f"not {k}:{v}" for k, v in must_not.items())
-            
+
             if clauses:
                 query_string["query"] = " and ".join(clauses)
                 query_obj_def["query"]["query_string"] = query_string

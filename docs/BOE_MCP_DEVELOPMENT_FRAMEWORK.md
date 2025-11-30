@@ -397,6 +397,153 @@ diario_numero: int | None = None,  # Número del BOE
 
 ---
 
+## 0.7 Metodología de Validación: Triple Validación
+
+> **RPVEA 2.0 - Fase V (Validación) Ampliada**
+>
+> Antes de hacer merge de cualquier cambio en el MCP, se debe completar la **Triple Validación**.
+
+### Niveles de Validación
+
+| Nivel | Nombre | Qué Valida | Herramienta | Cuándo Falla |
+|-------|--------|------------|-------------|--------------|
+| **V1** | API Directa | Los campos/endpoints existen en la API | `curl` | Estamos usando campos que no existen |
+| **V2** | MCP Local | El código MCP genera queries correctas | Script Python import | Bug en construcción de query |
+| **V3** | MCP End-to-End | El MCP funciona como servidor real | MCP Client SDK | Error de protocolo o serialización |
+
+### V1 - Validación de API Directa
+
+Probar directamente contra la API del BOE sin pasar por el MCP:
+
+```bash
+# Ejemplo: Validar que rango@codigo funciona
+curl -s "https://www.boe.es/datosabiertos/api/legislacion-consolidada?limit=3&query=%7B%22query%22%3A%7B%22query_string%22%3A%7B%22query%22%3A%22rango%40codigo%3A%5C%221300%5C%22%22%7D%7D%7D" \
+  -H "Accept: application/json" | python3 -m json.tool | head -30
+```
+
+**Criterio de éxito**: La API devuelve resultados filtrados correctamente.
+
+### V2 - Validación de MCP Local
+
+Importar la función directamente y probar que genera las queries correctas:
+
+```python
+# tests/test_v110_validation.py
+import asyncio
+from boe_mcp.server import search_laws_list
+
+async def test_rango_codigo():
+    result = await search_laws_list(rango_codigo="1300", limit=3)
+
+    # Verificar query generada
+    query_str = result.get("params", {}).get("query", "")
+    assert 'rango@codigo:"1300"' in query_str
+
+    # Verificar resultados
+    data = result.get("data", {}).get("data", [])
+    assert all(item["rango"]["codigo"] == "1300" for item in data)
+```
+
+**Criterio de éxito**:
+- La query JSON contiene los filtros correctos
+- Los resultados cumplen el filtro solicitado
+
+### V3 - Validación End-to-End
+
+Usar el MCP Client SDK para llamar al servidor como un cliente real:
+
+```python
+# tests/test_v3_e2e.py
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def test_e2e():
+    server_params = StdioServerParameters(
+        command=".venv/bin/python",
+        args=["-m", "boe_mcp.server"],
+        env={"PYTHONPATH": "src"}
+    )
+
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # Verificar que los nuevos parámetros aparecen en el schema
+            tools = await session.list_tools()
+            search_tool = next(t for t in tools.tools if t.name == "search_laws_list")
+            assert "rango_codigo" in search_tool.inputSchema["properties"]
+
+            # Llamar al tool
+            result = await session.call_tool(
+                "search_laws_list",
+                arguments={"rango_codigo": "1300", "limit": 2}
+            )
+            # Verificar resultado...
+```
+
+**Criterio de éxito**:
+- Los nuevos parámetros aparecen en el schema MCP
+- Las llamadas al tool funcionan correctamente
+- Los resultados son correctos
+
+### Flujo de Validación Recomendado
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    FLUJO TRIPLE VALIDACIÓN                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1. Implementar cambio en server.py                             │
+│         │                                                       │
+│         ▼                                                       │
+│  2. V1: Probar API directamente (curl)                          │
+│         │                                                       │
+│         ├── FALLA → Revisar documentación API                   │
+│         │                                                       │
+│         ▼ PASA                                                  │
+│  3. V2: Ejecutar tests locales                                  │
+│         │                                                       │
+│         ├── FALLA → Bug en código, corregir                     │
+│         │                                                       │
+│         ▼ PASA                                                  │
+│  4. V3: Ejecutar test end-to-end                                │
+│         │                                                       │
+│         ├── FALLA → Problema protocolo/serialización            │
+│         │                                                       │
+│         ▼ PASA                                                  │
+│  5. ✅ Listo para commit y PR                                   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Comandos de Validación
+
+```bash
+# V1 - API Directa (manual, ver ejemplos arriba)
+
+# V2 - MCP Local
+.venv/bin/python tests/test_v110_validation.py
+
+# V3 - End-to-End
+.venv/bin/python tests/test_v3_e2e.py
+
+# Todos los tests
+.venv/bin/python -m pytest tests/ -v
+```
+
+### Registro de Validaciones
+
+Cada PR debe incluir en su descripción:
+
+```markdown
+## Validación
+- [x] V1: API directa verificada
+- [x] V2: Tests locales pasan (X/X)
+- [x] V3: Test end-to-end pasa
+```
+
+---
+
 ## 1. Design Philosophy
 
 ### 1.1 Core Principle
