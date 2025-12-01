@@ -6,6 +6,17 @@ import logging
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
+# v1.3.0: Input validators for security
+from boe_mcp.validators import (
+    ValidationError,
+    validate_boe_identifier,
+    validate_block_id,
+    validate_fecha,
+    validate_date_range,
+    validate_query_value,
+    validate_codigo,
+)
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOE-MCPServer")
 
@@ -101,6 +112,10 @@ async def search_laws_list(
     materia_codigo: str | None = None,
     numero_oficial: str | None = None,
 
+    # v1.3.0 - Nuevos parámetros de filtro
+    departamento_codigo: str | None = None,
+    diario_numero: int | None = None,
+
     # v1.2.0 - Filtros de rango por fecha (requieren ambos límites, se autocompletan)
     fecha_publicacion_desde: str | None = None,
     fecha_publicacion_hasta: str | None = None,
@@ -147,6 +162,10 @@ async def search_laws_list(
         -numero_oficial: Número oficial de la norma (ej: "39/2015", "1/2023").
             Permite búsqueda exacta por número de ley/decreto.
 
+        -departamento_codigo: Código del departamento emisor (ej: "5140" para Ministerio de Hacienda).
+            Ver get_auxiliary_table("departamentos") para lista completa.
+        -diario_numero: Número del BOE donde se publicó la norma.
+
         -fecha_publicacion_desde: Fecha mínima de publicación en BOE (AAAAMMDD).
             Si se especifica sin fecha_publicacion_hasta, se autocompleta hasta hoy.
         -fecha_publicacion_hasta: Fecha máxima de publicación en BOE (AAAAMMDD).
@@ -168,6 +187,46 @@ async def search_laws_list(
             Prefiera usar ordenar_por y ordenar_direccion en su lugar.
     """
 
+    # v1.3.0: Input validation
+    try:
+        # Validate dates
+        if from_date:
+            from_date = validate_fecha(from_date)
+        if to_date:
+            to_date = validate_fecha(to_date)
+        from_date, to_date = validate_date_range(from_date, to_date)
+
+        if fecha_publicacion_desde:
+            fecha_publicacion_desde = validate_fecha(fecha_publicacion_desde)
+        if fecha_publicacion_hasta:
+            fecha_publicacion_hasta = validate_fecha(fecha_publicacion_hasta)
+        fecha_publicacion_desde, fecha_publicacion_hasta = validate_date_range(
+            fecha_publicacion_desde, fecha_publicacion_hasta
+        )
+
+        if fecha_disposicion_desde:
+            fecha_disposicion_desde = validate_fecha(fecha_disposicion_desde)
+        if fecha_disposicion_hasta:
+            fecha_disposicion_hasta = validate_fecha(fecha_disposicion_hasta)
+        fecha_disposicion_desde, fecha_disposicion_hasta = validate_date_range(
+            fecha_disposicion_desde, fecha_disposicion_hasta
+        )
+
+        # Validate query
+        if query_value:
+            query_value = validate_query_value(query_value)
+
+        # Validate codes
+        if rango_codigo:
+            rango_codigo = validate_codigo(rango_codigo)
+        if materia_codigo:
+            materia_codigo = validate_codigo(materia_codigo)
+        if departamento_codigo:
+            departamento_codigo = validate_codigo(departamento_codigo)
+
+    except ValidationError as e:
+        return f"Error de validación: {e}"
+
     endpoint = "/datosabiertos/api/legislacion-consolidada"
     
     params: dict[str, Union[str, int, None]] = {}
@@ -181,10 +240,11 @@ async def search_laws_list(
     if limit:
         params["limit"] = limit
 
-    # v1.2.0: Incluir todos los parámetros que requieren objeto query
+    # v1.3.0: Incluir todos los parámetros que requieren objeto query
     has_query_params = (
         query_value or ambito or must or should or must_not or range_filters or sort_by
         or rango_codigo or materia_codigo or numero_oficial
+        or departamento_codigo or diario_numero  # v1.3.0
         or fecha_publicacion_desde or fecha_publicacion_hasta
         or fecha_disposicion_desde or fecha_disposicion_hasta
         or ordenar_por
@@ -229,10 +289,11 @@ async def search_laws_list(
             # Parámetro avanzado legacy
             query_obj_def["sort"] = sort_by
 
-        # v1.1.0: Incluir nuevos filtros en la condición
+        # v1.3.0: Incluir nuevos filtros en la condición
         has_clauses = (
             query_value or ambito or must or should or must_not
             or rango_codigo or materia_codigo or numero_oficial
+            or departamento_codigo or diario_numero  # v1.3.0
         )
 
         if has_clauses:
@@ -281,6 +342,14 @@ async def search_laws_list(
             # 🔢 v1.1.0: Filtro por número oficial de norma
             if numero_oficial:
                 clauses.append(f'numero_oficial:"{numero_oficial}"')
+
+            # 🏛️ v1.3.0: Filtro por departamento emisor
+            if departamento_codigo:
+                clauses.append(f'departamento@codigo:"{departamento_codigo}"')
+
+            # 📰 v1.3.0: Filtro por número de diario BOE
+            if diario_numero:
+                clauses.append(f'diario_numero:"{diario_numero}"')
 
             # 🧱 Condiciones adicionales
             for cond_type, operator in [("must", "and"), ("should", "or")]:
@@ -342,6 +411,14 @@ async def get_law_section(
     Returns:
         Contenido de la norma o parte solicitada (como string XML o JSON).
     """
+    # v1.3.0: Input validation
+    try:
+        identifier = validate_boe_identifier(identifier)
+        if block_id:
+            block_id = validate_block_id(block_id)
+    except ValidationError as e:
+        return f"Error de validación: {e}"
+
     base = f"/datosabiertos/api/legislacion-consolidada/id/{identifier}"
 
     # Construir el endpoint correcto
@@ -375,11 +452,17 @@ class boe_summaryParams(BaseModel):
 async def get_boe_summary(params: boe_summaryParams) -> Union[dict, str]:
     """
     Obtener sumario del BOE para una fecha (AAAAMMDD).
-    
+
     Args:
         fecha: Fecha del BOE (ej: 20240501)
     """
     fecha = params.fecha
+
+    # v1.3.0: Input validation
+    try:
+        fecha = validate_fecha(fecha)
+    except ValidationError as e:
+        return f"Error de validación: {e}"
 
     endpoint = f"/datosabiertos/api/boe/sumario/{fecha}"
     data = await make_boe_request(endpoint)
@@ -405,10 +488,16 @@ async def get_boe_summary(params: boe_summaryParams) -> Union[dict, str]:
 async def get_borme_summary(fecha: str) -> Union[dict, str]:
     """
     Obtener sumario del BORME para una fecha (AAAAMMDD).
-    
+
     Args:
         fecha: Fecha del BORME (ej: 20240501)
     """
+    # v1.3.0: Input validation
+    try:
+        fecha = validate_fecha(fecha)
+    except ValidationError as e:
+        return f"Error de validación: {e}"
+
     endpoint = f"/datosabiertos/api/borme/sumario/{fecha}"
     data = await make_boe_request(endpoint)
 
