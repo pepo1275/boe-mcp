@@ -8,6 +8,7 @@ from .identifiers import validate_boe_identifier, validate_block_id
 from .dates import validate_fecha, validate_date_range
 from .queries import validate_query_value, validate_codigo
 from .articles import validate_articulo
+from .sections import validate_seccion_boe, SECCIONES_BOE_VALIDAS
 from .base import ValidationError
 
 __all__ = [
@@ -19,4 +20,6 @@ __all__ = [
     "validate_query_value",
     "validate_codigo",
     "validate_articulo",
+    "validate_seccion_boe",
+    "SECCIONES_BOE_VALIDAS",
 ]

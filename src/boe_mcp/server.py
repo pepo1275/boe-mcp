@@ -18,6 +18,8 @@ from boe_mcp.validators import (
     validate_query_value,
     validate_codigo,
     validate_articulo,
+    validate_seccion_boe,  # v1.5.0: Smart Summary
+    SECCIONES_BOE_VALIDAS,  # v1.5.0: Smart Summary
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -1405,6 +1407,639 @@ async def get_boe_summary(params: boe_summaryParams) -> Union[dict, str]:
         lineas.append(f"- {identificador}: {url_pdf}")
     return "\n".join(lineas)
     '''
+
+
+# ----------- 2.1 SMART SUMMARY BOE (v1.5.0) ---------------
+
+
+def _contar_items_seccion(seccion: dict) -> int:
+    """
+    Cuenta el total de items (documentos) en una sección del sumario.
+
+    La estructura de la API es compleja: items pueden estar en:
+    - departamento.item (directo)
+    - departamento.epigrafe[].item (dentro de epígrafe)
+    - departamento.texto.epigrafe[].item (dentro de texto.epigrafe)
+
+    Args:
+        seccion: Diccionario de una sección del sumario
+
+    Returns:
+        Número total de items en la sección
+    """
+    total = 0
+    depts = seccion.get("departamento", [])
+    if not isinstance(depts, list):
+        depts = [depts] if depts else []
+
+    for dept in depts:
+        # Items directos en departamento
+        items = dept.get("item", [])
+        if not isinstance(items, list):
+            items = [items] if items else []
+        total += len(items)
+
+        # Items en epígrafes directos
+        epigrafes = dept.get("epigrafe", [])
+        if not isinstance(epigrafes, list):
+            epigrafes = [epigrafes] if epigrafes else []
+        for ep in epigrafes:
+            items_ep = ep.get("item", [])
+            if not isinstance(items_ep, list):
+                items_ep = [items_ep] if items_ep else []
+            total += len(items_ep)
+
+        # Items en texto.epigrafe
+        texto = dept.get("texto", {})
+        if texto:
+            epigrafes_t = texto.get("epigrafe", [])
+            if not isinstance(epigrafes_t, list):
+                epigrafes_t = [epigrafes_t] if epigrafes_t else []
+            for ep in epigrafes_t:
+                items_t = ep.get("item", [])
+                if not isinstance(items_t, list):
+                    items_t = [items_t] if items_t else []
+                total += len(items_t)
+
+    return total
+
+
+def _extraer_items_seccion(seccion: dict) -> list[dict]:
+    """
+    Extrae todos los items (documentos) de una sección con su contexto.
+
+    Args:
+        seccion: Diccionario de una sección del sumario
+
+    Returns:
+        Lista de diccionarios con info de cada documento
+    """
+    items_list = []
+    depts = seccion.get("departamento", [])
+    if not isinstance(depts, list):
+        depts = [depts] if depts else []
+
+    for dept in depts:
+        dept_nombre = dept.get("nombre", "")
+        dept_codigo = dept.get("codigo", "")
+
+        # Items directos en departamento
+        items = dept.get("item", [])
+        if not isinstance(items, list):
+            items = [items] if items else []
+        for item in items:
+            items_list.append(_item_to_dict(item, dept_nombre, dept_codigo, None))
+
+        # Items en epígrafes directos
+        epigrafes = dept.get("epigrafe", [])
+        if not isinstance(epigrafes, list):
+            epigrafes = [epigrafes] if epigrafes else []
+        for ep in epigrafes:
+            ep_nombre = ep.get("nombre", "")
+            items_ep = ep.get("item", [])
+            if not isinstance(items_ep, list):
+                items_ep = [items_ep] if items_ep else []
+            for item in items_ep:
+                items_list.append(_item_to_dict(item, dept_nombre, dept_codigo, ep_nombre))
+
+        # Items en texto.epigrafe
+        texto = dept.get("texto", {})
+        if texto:
+            epigrafes_t = texto.get("epigrafe", [])
+            if not isinstance(epigrafes_t, list):
+                epigrafes_t = [epigrafes_t] if epigrafes_t else []
+            for ep in epigrafes_t:
+                ep_nombre = ep.get("nombre", "")
+                items_t = ep.get("item", [])
+                if not isinstance(items_t, list):
+                    items_t = [items_t] if items_t else []
+                for item in items_t:
+                    items_list.append(_item_to_dict(item, dept_nombre, dept_codigo, ep_nombre))
+
+    return items_list
+
+
+def _item_to_dict(
+    item: dict, dept_nombre: str, dept_codigo: str, epigrafe: str | None
+) -> dict:
+    """
+    Convierte un item del sumario a diccionario estructurado.
+
+    Args:
+        item: Diccionario del item de la API
+        dept_nombre: Nombre del departamento
+        dept_codigo: Código del departamento
+        epigrafe: Nombre del epígrafe (opcional)
+
+    Returns:
+        Diccionario estructurado del documento
+    """
+    url_pdf = item.get("url_pdf", {})
+    if isinstance(url_pdf, dict):
+        url_pdf = url_pdf.get("texto", "")
+
+    url_html = item.get("url_html", {})
+    if isinstance(url_html, dict):
+        url_html = url_html.get("texto", "")
+
+    return {
+        "identificador": item.get("identificador", ""),
+        "titulo": item.get("titulo", ""),
+        "departamento": dept_nombre,
+        "departamento_codigo": dept_codigo,
+        "epigrafe": epigrafe,
+        "url_pdf": url_pdf,
+        "url_html": url_html,
+    }
+
+
+@mcp.tool()
+async def get_boe_summary_metadata(fecha: str) -> dict:
+    """
+    Obtener resumen compacto del sumario BOE con conteo por sección.
+
+    Esta herramienta proporciona una vista general del BOE de un día específico,
+    mostrando cuántos documentos hay en cada sección. Es la herramienta recomendada
+    como primer paso para explorar el BOE del día.
+
+    NOTA: Para obtener los documentos de una sección específica, usar
+    get_boe_summary_section después de esta herramienta.
+
+    Args:
+        fecha: Fecha del BOE en formato AAAAMMDD (ej: "20241202")
+
+    Returns:
+        Diccionario con:
+        - fecha: Fecha solicitada
+        - numero_boe: Número del boletín
+        - identificador: Identificador del sumario (BOE-S-YYYY-NNN)
+        - url_pdf_sumario: URL del PDF del sumario
+        - total_documentos: Total de documentos en el día
+        - secciones: Lista de secciones con código, nombre y num_items
+
+        En caso de error:
+        - error: True
+        - codigo: Código de error (VALIDATION_ERROR, SUMARIO_NO_DISPONIBLE)
+        - mensaje: Descripción del error
+        - detalles: Información adicional (opcional)
+
+    Examples:
+        >>> get_boe_summary_metadata("20241202")
+        {
+            "fecha": "20241202",
+            "numero_boe": "290",
+            "total_documentos": 238,
+            "secciones": [
+                {"codigo": "1", "nombre": "I. Disposiciones generales", "num_items": 2},
+                ...
+            ]
+        }
+    """
+    # 1. VALIDACIÓN
+    try:
+        fecha = validate_fecha(fecha)
+    except ValidationError as e:
+        return {
+            "error": True,
+            "codigo": "VALIDATION_ERROR",
+            "mensaje": str(e),
+            "detalles": None
+        }
+
+    # 2. REQUEST A API
+    endpoint = f"/datosabiertos/api/boe/sumario/{fecha}"
+    data = await make_boe_request(endpoint)
+
+    if not data or "data" not in data or "sumario" not in data["data"]:
+        return {
+            "error": True,
+            "codigo": "SUMARIO_NO_DISPONIBLE",
+            "mensaje": f"No hay sumario BOE disponible para {fecha}. "
+                       "Puede ser domingo o festivo.",
+            "detalles": None
+        }
+
+    # 3. PROCESAR DATOS
+    sumario = data["data"]["sumario"]
+    diario = sumario.get("diario", [])
+    if isinstance(diario, list) and len(diario) > 0:
+        diario = diario[0]
+    elif not isinstance(diario, dict):
+        diario = {}
+
+    numero_boe = diario.get("numero", "")
+    sumario_diario = diario.get("sumario_diario", {})
+    identificador = sumario_diario.get("identificador", "")
+    url_pdf = sumario_diario.get("url_pdf", {})
+    if isinstance(url_pdf, dict):
+        url_pdf = url_pdf.get("texto", "")
+
+    # Procesar secciones
+    secciones_data = diario.get("seccion", [])
+    if not isinstance(secciones_data, list):
+        secciones_data = [secciones_data] if secciones_data else []
+
+    secciones = []
+    total_documentos = 0
+
+    for sec in secciones_data:
+        codigo = sec.get("codigo", "")
+        nombre = sec.get("nombre", "")
+        num_items = _contar_items_seccion(sec)
+        total_documentos += num_items
+        secciones.append({
+            "codigo": codigo,
+            "nombre": nombre,
+            "num_items": num_items
+        })
+
+    # 4. RETORNAR
+    return {
+        "fecha": fecha,
+        "numero_boe": numero_boe,
+        "identificador": identificador,
+        "url_pdf_sumario": url_pdf,
+        "total_documentos": total_documentos,
+        "secciones": secciones
+    }
+
+
+@mcp.tool()
+async def get_boe_summary_section(
+    fecha: str,
+    seccion: str,
+    limit: int = 20,
+    offset: int = 0
+) -> dict:
+    """
+    Obtener documentos de una sección específica del BOE con paginación.
+
+    Esta herramienta permite explorar los documentos de una sección concreta
+    del BOE, con soporte para paginación para manejar secciones con muchos
+    documentos.
+
+    Códigos de sección válidos:
+    - "1": Disposiciones generales
+    - "2A": Autoridades y personal - Nombramientos
+    - "2B": Autoridades y personal - Oposiciones y concursos
+    - "3": Otras disposiciones
+    - "4": Administración de Justicia
+    - "5A": Anuncios - Contratación del Sector Público
+    - "5B": Anuncios - Otros anuncios oficiales
+    - "5C": Anuncios - Anuncios particulares
+
+    Args:
+        fecha: Fecha del BOE en formato AAAAMMDD (ej: "20241202")
+        seccion: Código de sección (ej: "1", "2A", "2B", "3", "4", "5A", "5B", "5C")
+        limit: Máximo número de documentos a devolver (default: 20, max: 100)
+        offset: Número de documentos a saltar para paginación (default: 0)
+
+    Returns:
+        Diccionario con:
+        - fecha: Fecha solicitada
+        - seccion: Info de la sección (codigo, nombre)
+        - total_items: Total de documentos en la sección
+        - offset: Offset actual
+        - limit: Límite actual
+        - hay_mas: True si hay más documentos disponibles
+        - documentos: Lista de documentos con identificador, titulo, departamento, etc.
+
+        En caso de error:
+        - error: True
+        - codigo: Código de error
+        - mensaje: Descripción del error
+        - detalles: Información adicional
+
+    Examples:
+        >>> get_boe_summary_section("20241202", "2B", limit=10)
+        {
+            "fecha": "20241202",
+            "seccion": {"codigo": "2B", "nombre": "II. Autoridades..."},
+            "total_items": 33,
+            "hay_mas": True,
+            "documentos": [...]
+        }
+    """
+    # 1. VALIDACIÓN
+    try:
+        fecha = validate_fecha(fecha)
+    except ValidationError as e:
+        return {
+            "error": True,
+            "codigo": "VALIDATION_ERROR",
+            "mensaje": str(e),
+            "detalles": {"parametro": "fecha"}
+        }
+
+    try:
+        seccion = validate_seccion_boe(seccion)
+    except ValidationError as e:
+        return {
+            "error": True,
+            "codigo": "VALIDATION_ERROR",
+            "mensaje": str(e),
+            "detalles": {"parametro": "seccion"}
+        }
+
+    # Validar limit y offset
+    if limit < 1:
+        limit = 1
+    elif limit > 100:
+        limit = 100
+
+    if offset < 0:
+        offset = 0
+
+    # 2. REQUEST A API
+    endpoint = f"/datosabiertos/api/boe/sumario/{fecha}"
+    data = await make_boe_request(endpoint)
+
+    if not data or "data" not in data or "sumario" not in data["data"]:
+        return {
+            "error": True,
+            "codigo": "SUMARIO_NO_DISPONIBLE",
+            "mensaje": f"No hay sumario BOE disponible para {fecha}. "
+                       "Puede ser domingo o festivo.",
+            "detalles": None
+        }
+
+    # 3. PROCESAR DATOS
+    sumario = data["data"]["sumario"]
+    diario = sumario.get("diario", [])
+    if isinstance(diario, list) and len(diario) > 0:
+        diario = diario[0]
+    elif not isinstance(diario, dict):
+        diario = {}
+
+    # Buscar la sección solicitada
+    secciones_data = diario.get("seccion", [])
+    if not isinstance(secciones_data, list):
+        secciones_data = [secciones_data] if secciones_data else []
+
+    seccion_encontrada = None
+    for sec in secciones_data:
+        if sec.get("codigo", "").upper() == seccion:
+            seccion_encontrada = sec
+            break
+
+    if not seccion_encontrada:
+        return {
+            "error": True,
+            "codigo": "SECCION_NO_ENCONTRADA",
+            "mensaje": f"Sección '{seccion}' no encontrada en el BOE del {fecha}",
+            "detalles": {
+                "secciones_disponibles": [s.get("codigo") for s in secciones_data]
+            }
+        }
+
+    # Extraer items de la sección
+    todos_items = _extraer_items_seccion(seccion_encontrada)
+    total_items = len(todos_items)
+
+    # Aplicar paginación
+    items_paginados = todos_items[offset:offset + limit]
+    hay_mas = (offset + limit) < total_items
+
+    # 4. RETORNAR
+    return {
+        "fecha": fecha,
+        "seccion": {
+            "codigo": seccion_encontrada.get("codigo", ""),
+            "nombre": seccion_encontrada.get("nombre", "")
+        },
+        "total_items": total_items,
+        "offset": offset,
+        "limit": limit,
+        "hay_mas": hay_mas,
+        "documentos": items_paginados
+    }
+
+
+@mcp.tool()
+async def get_boe_document_info(identificador: str, fecha: str | None = None) -> dict:
+    """
+    Obtener información detallada de un documento específico del BOE.
+
+    Esta herramienta permite obtener los detalles de un documento cuando
+    se conoce su identificador (ej: BOE-A-2024-25060). Si se proporciona
+    la fecha de publicación, busca en el sumario de ese día para obtener
+    información completa. Si no se proporciona fecha, devuelve URLs básicas.
+
+    NOTA: Para obtener información completa (título, departamento, etc.),
+    proporciona la fecha de publicación. Si solo tienes el identificador,
+    usa get_boe_summary_section para encontrar el documento en una sección.
+
+    Args:
+        identificador: Identificador del documento BOE (ej: "BOE-A-2024-25060")
+        fecha: Fecha de publicación AAAAMMDD (opcional, mejora resultados)
+
+    Returns:
+        Diccionario con información del documento:
+        - identificador: ID del documento
+        - titulo: Título completo (si se proporciona fecha)
+        - departamento: Nombre del departamento (si se proporciona fecha)
+        - url_pdf: URL del PDF
+        - url_html: URL de la versión HTML
+        - url_xml: URL de la versión XML
+
+        En caso de error:
+        - error: True
+        - codigo: Código de error (VALIDATION_ERROR, DOCUMENTO_NO_ENCONTRADO)
+        - mensaje: Descripción del error
+        - detalles: Información adicional
+
+    Examples:
+        >>> get_boe_document_info("BOE-A-2024-25051", "20241202")
+        {
+            "identificador": "BOE-A-2024-25051",
+            "titulo": "Ley 5/2024, de 13 de noviembre...",
+            "departamento": "COMUNIDAD AUTÓNOMA DE CANARIAS",
+            ...
+        }
+    """
+    # 1. VALIDACIÓN
+    try:
+        identificador = validate_boe_identifier(identificador)
+    except ValidationError as e:
+        return {
+            "error": True,
+            "codigo": "VALIDATION_ERROR",
+            "mensaje": str(e),
+            "detalles": None
+        }
+
+    if fecha:
+        try:
+            fecha = validate_fecha(fecha)
+        except ValidationError as e:
+            return {
+                "error": True,
+                "codigo": "VALIDATION_ERROR",
+                "mensaje": str(e),
+                "detalles": {"parametro": "fecha"}
+            }
+
+    # 2. SI HAY FECHA, BUSCAR EN SUMARIO
+    if fecha:
+        endpoint = f"/datosabiertos/api/boe/sumario/{fecha}"
+        data = await make_boe_request(endpoint)
+
+        if data and "data" in data and "sumario" in data["data"]:
+            # Buscar el documento en el sumario
+            doc_info = _buscar_documento_en_sumario(data, identificador)
+            if doc_info:
+                return doc_info
+
+        # Si no se encontró en el sumario de esa fecha
+        return {
+            "error": True,
+            "codigo": "DOCUMENTO_NO_ENCONTRADO",
+            "mensaje": f"No se encontró {identificador} en el BOE del {fecha}",
+            "detalles": {
+                "sugerencia": "Verifique que la fecha sea correcta o use get_boe_summary_section"
+            }
+        }
+
+    # 3. SIN FECHA: DEVOLVER URLs BÁSICAS
+    # Construir URLs estándar del BOE
+    url_html = f"https://www.boe.es/diario_boe/txt.php?id={identificador}"
+    url_xml = f"https://www.boe.es/diario_boe/xml.php?id={identificador}"
+
+    return {
+        "identificador": identificador,
+        "titulo": None,
+        "departamento": None,
+        "seccion": None,
+        "epigrafe": None,
+        "fecha_publicacion": None,
+        "url_pdf": None,  # No podemos construir sin fecha
+        "url_html": url_html,
+        "url_xml": url_xml,
+        "nota": "Para información completa, proporcione la fecha de publicación"
+    }
+
+
+def _buscar_documento_en_sumario(data: dict, identificador: str) -> dict | None:
+    """
+    Busca un documento por identificador en la estructura del sumario.
+
+    Args:
+        data: Respuesta completa del API de sumario
+        identificador: ID del documento a buscar
+
+    Returns:
+        Diccionario con info del documento o None si no se encuentra
+    """
+    sumario = data["data"]["sumario"]
+    diario = sumario.get("diario", [])
+    if isinstance(diario, list) and len(diario) > 0:
+        diario = diario[0]
+    elif not isinstance(diario, dict):
+        return None
+
+    secciones = diario.get("seccion", [])
+    if not isinstance(secciones, list):
+        secciones = [secciones] if secciones else []
+
+    for seccion in secciones:
+        seccion_codigo = seccion.get("codigo", "")
+        seccion_nombre = seccion.get("nombre", "")
+
+        depts = seccion.get("departamento", [])
+        if not isinstance(depts, list):
+            depts = [depts] if depts else []
+
+        for dept in depts:
+            dept_nombre = dept.get("nombre", "")
+            dept_codigo = dept.get("codigo", "")
+
+            # Buscar en items directos
+            result = _buscar_en_items(
+                dept.get("item", []),
+                identificador, dept_nombre, dept_codigo,
+                seccion_codigo, seccion_nombre, None
+            )
+            if result:
+                return result
+
+            # Buscar en epígrafes
+            epigrafes = dept.get("epigrafe", [])
+            if not isinstance(epigrafes, list):
+                epigrafes = [epigrafes] if epigrafes else []
+            for ep in epigrafes:
+                result = _buscar_en_items(
+                    ep.get("item", []),
+                    identificador, dept_nombre, dept_codigo,
+                    seccion_codigo, seccion_nombre, ep.get("nombre", "")
+                )
+                if result:
+                    return result
+
+            # Buscar en texto.epigrafe
+            texto = dept.get("texto", {})
+            if texto:
+                epigrafes_t = texto.get("epigrafe", [])
+                if not isinstance(epigrafes_t, list):
+                    epigrafes_t = [epigrafes_t] if epigrafes_t else []
+                for ep in epigrafes_t:
+                    result = _buscar_en_items(
+                        ep.get("item", []),
+                        identificador, dept_nombre, dept_codigo,
+                        seccion_codigo, seccion_nombre, ep.get("nombre", "")
+                    )
+                    if result:
+                        return result
+
+    return None
+
+
+def _buscar_en_items(
+    items: list | dict,
+    identificador: str,
+    dept_nombre: str,
+    dept_codigo: str,
+    seccion_codigo: str,
+    seccion_nombre: str,
+    epigrafe: str | None
+) -> dict | None:
+    """Busca un identificador en una lista de items."""
+    if not isinstance(items, list):
+        items = [items] if items else []
+
+    for item in items:
+        if item.get("identificador") == identificador:
+            # Extraer URL del PDF
+            url_pdf = item.get("url_pdf", {})
+            if isinstance(url_pdf, dict):
+                url_pdf_texto = url_pdf.get("texto", "")
+                pagina_inicial = url_pdf.get("pagina_inicial", "")
+                pagina_final = url_pdf.get("pagina_final", "")
+            else:
+                url_pdf_texto = url_pdf
+                pagina_inicial = ""
+                pagina_final = ""
+
+            return {
+                "identificador": identificador,
+                "titulo": item.get("titulo", ""),
+                "departamento": dept_nombre,
+                "departamento_codigo": dept_codigo,
+                "seccion": {
+                    "codigo": seccion_codigo,
+                    "nombre": seccion_nombre
+                },
+                "epigrafe": epigrafe,
+                "url_pdf": url_pdf_texto,
+                "url_html": item.get("url_html", ""),
+                "url_xml": item.get("url_xml", ""),
+                "paginas": {
+                    "inicial": pagina_inicial,
+                    "final": pagina_final
+                } if pagina_inicial else None
+            }
+
+    return None
+
 
 # ----------- 3. SUMARIO BORME -----------------------------
 
