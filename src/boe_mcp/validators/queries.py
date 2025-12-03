@@ -21,6 +21,9 @@ INJECTION_PATTERNS = [
     re.compile(r'\)\s*(OR|AND)\s*\(', re.IGNORECASE),  # SQL-like injection
     re.compile(r'[\x00-\x1f]'),                         # Control characters
     re.compile(r'\*{3,}'),                              # Excessive wildcards
+    re.compile(r'<[^>]*script', re.IGNORECASE),        # XSS script tags
+    re.compile(r'javascript:', re.IGNORECASE),          # javascript: URLs
+    re.compile(r'on\w+\s*=', re.IGNORECASE),           # Event handlers (onclick=, onerror=)
 ]
 
 

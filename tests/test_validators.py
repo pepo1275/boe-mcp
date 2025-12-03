@@ -85,11 +85,13 @@ class TestBlockId:
 
     def test_disposicion_adicional(self):
         """Additional disposition."""
-        assert validate_block_id("da10") == "da10"
+        assert validate_block_id("da") == "da"
+        assert validate_block_id("da-10") == "da-10"
 
     def test_disposicion_transitoria(self):
         """Transitory disposition."""
-        assert validate_block_id("dt1") == "dt1"
+        assert validate_block_id("dt") == "dt"
+        assert validate_block_id("dt-1") == "dt-1"
 
     def test_disposicion_derogatoria(self):
         """Derogatory disposition (without number)."""
@@ -97,13 +99,13 @@ class TestBlockId:
 
     def test_disposicion_derogatoria_numbered(self):
         """Derogatory disposition (with number)."""
-        assert validate_block_id("dd1") == "dd1"
+        assert validate_block_id("dd-1") == "dd-1"
 
     def test_disposicion_final(self):
         """Final disposition."""
         assert validate_block_id("df") == "df"
-        assert validate_block_id("df1") == "df1"
-        assert validate_block_id("df10") == "df10"
+        assert validate_block_id("df-1") == "df-1"
+        assert validate_block_id("df-10") == "df-10"
 
     def test_preambulo(self):
         """Preamble."""
@@ -121,7 +123,7 @@ class TestBlockId:
     def test_uppercase_normalized(self):
         """Uppercase is normalized to lowercase."""
         assert validate_block_id("A1") == "a1"
-        assert validate_block_id("DA10") == "da10"
+        assert validate_block_id("DA-10") == "da-10"
 
     def test_whitespace_stripped(self):
         """Whitespace is stripped."""
@@ -161,6 +163,54 @@ class TestBlockId:
         """Unknown format raises error."""
         with pytest.raises(ValidationError, match="Invalid block_id"):
             validate_block_id("xyz")
+
+    # v2.0: Tests for complex block_id patterns from real BOE data
+    def test_article_with_suffix(self):
+        """Article with hyphenated suffix (e.g., a1-2 for Artículo 10)."""
+        assert validate_block_id("a1-2") == "a1-2"
+        assert validate_block_id("a3-112") == "a3-112"
+
+    def test_disposicion_adicional_hyphen(self):
+        """Additional disposition with hyphen (da-2, da-3)."""
+        assert validate_block_id("da") == "da"
+        assert validate_block_id("da-2") == "da-2"
+        assert validate_block_id("da-3") == "da-3"
+
+    def test_disposicion_final_hyphen(self):
+        """Final disposition with hyphen (df-2)."""
+        assert validate_block_id("df-2") == "df-2"
+
+    def test_articulo_unico(self):
+        """Artículo único (au)."""
+        assert validate_block_id("au") == "au"
+
+    def test_texto_ley(self):
+        """Texto/título de la ley (te)."""
+        assert validate_block_id("te") == "te"
+
+    def test_libro(self):
+        """Book identifiers (lp, ls)."""
+        assert validate_block_id("lp") == "lp"
+        assert validate_block_id("ls") == "ls"
+
+    def test_titulo_hyphen(self):
+        """Title with hyphen (ti-2, ti-3)."""
+        assert validate_block_id("ti") == "ti"
+        assert validate_block_id("ti-2") == "ti-2"
+        assert validate_block_id("ti-3") == "ti-3"
+
+    def test_capitulo_variants(self):
+        """Chapter variants (ci, cv for capítulo quinto)."""
+        assert validate_block_id("ci") == "ci"
+        assert validate_block_id("ci-2") == "ci-2"
+        assert validate_block_id("cv") == "cv"
+        assert validate_block_id("cv-3") == "cv-3"
+
+    def test_seccion_complex(self):
+        """Section with complex numbering (s1, s2-3, s4-16)."""
+        assert validate_block_id("s1") == "s1"
+        assert validate_block_id("s2-3") == "s2-3"
+        assert validate_block_id("s4-16") == "s4-16"
 
 
 class TestFecha:

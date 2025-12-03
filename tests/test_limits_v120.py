@@ -31,7 +31,7 @@ TIMEOUT_SECONDS = 60  # Timeout generoso para límites altos
 
 
 @dataclass
-class TestResult:
+class LimitTestResult:
     """Resultado de una prueba de límite."""
     limit_requested: int
     status: str  # "OK", "ERROR", "TIMEOUT"
@@ -41,7 +41,7 @@ class TestResult:
     response_size_kb: float | None = None
 
 
-async def test_api_direct(limit: int, query: str = "ley") -> TestResult:
+async def _run_api_direct_test(limit: int, query: str = "ley") -> LimitTestResult:
     """
     Prueba directa contra API BOE (sin MCP).
     Replica la lógica de search_laws_list del servidor.
@@ -97,7 +97,7 @@ async def test_api_direct(limit: int, query: str = "ley") -> TestResult:
             # Tamaño de respuesta
             response_size_kb = len(response.content) / 1024
 
-            return TestResult(
+            return LimitTestResult(
                 limit_requested=limit,
                 status="OK",
                 results_returned=results_count,
@@ -107,7 +107,7 @@ async def test_api_direct(limit: int, query: str = "ley") -> TestResult:
 
         except httpx.TimeoutException:
             elapsed = time.perf_counter() - start_time
-            return TestResult(
+            return LimitTestResult(
                 limit_requested=limit,
                 status="TIMEOUT",
                 results_returned=None,
@@ -117,7 +117,7 @@ async def test_api_direct(limit: int, query: str = "ley") -> TestResult:
 
         except httpx.HTTPStatusError as e:
             elapsed = time.perf_counter() - start_time
-            return TestResult(
+            return LimitTestResult(
                 limit_requested=limit,
                 status="ERROR",
                 results_returned=None,
@@ -127,7 +127,7 @@ async def test_api_direct(limit: int, query: str = "ley") -> TestResult:
 
         except Exception as e:
             elapsed = time.perf_counter() - start_time
-            return TestResult(
+            return LimitTestResult(
                 limit_requested=limit,
                 status="ERROR",
                 results_returned=None,
@@ -136,7 +136,7 @@ async def test_api_direct(limit: int, query: str = "ley") -> TestResult:
             )
 
 
-async def test_api_with_date_range(limit: int) -> TestResult:
+async def _run_api_with_date_range_test(limit: int) -> LimitTestResult:
     """
     Prueba con filtro de fecha (feature v1.2.0).
     Busca desde 1978 hasta hoy - caso extremo de autocompletado.
@@ -199,7 +199,7 @@ async def test_api_with_date_range(limit: int) -> TestResult:
 
             response_size_kb = len(response.content) / 1024
 
-            return TestResult(
+            return LimitTestResult(
                 limit_requested=limit,
                 status="OK",
                 results_returned=results_count,
@@ -210,7 +210,7 @@ async def test_api_with_date_range(limit: int) -> TestResult:
 
         except httpx.TimeoutException:
             elapsed = time.perf_counter() - start_time
-            return TestResult(
+            return LimitTestResult(
                 limit_requested=limit,
                 status="TIMEOUT",
                 results_returned=None,
@@ -220,7 +220,7 @@ async def test_api_with_date_range(limit: int) -> TestResult:
 
         except Exception as e:
             elapsed = time.perf_counter() - start_time
-            return TestResult(
+            return LimitTestResult(
                 limit_requested=limit,
                 status="ERROR",
                 results_returned=None,
@@ -229,7 +229,7 @@ async def test_api_with_date_range(limit: int) -> TestResult:
             )
 
 
-def print_results_table(results: list[TestResult], title: str):
+def print_results_table(results: list[LimitTestResult], title: str):
     """Imprime tabla formateada de resultados."""
     print(f"\n{'='*70}")
     print(f"  {title}")
@@ -252,7 +252,7 @@ def print_results_table(results: list[TestResult], title: str):
             print(f"  ⚠️  Limit {r.limit_requested}: {r.error_message}")
 
 
-def analyze_results(results: list[TestResult]) -> dict[str, Any]:
+def analyze_results(results: list[LimitTestResult]) -> dict[str, Any]:
     """Analiza resultados para recomendaciones."""
     analysis = {
         "max_working_limit": 0,
@@ -310,7 +310,7 @@ async def run_all_tests(include_mcp: bool = False):
     results_simple = []
     for limit in LIMITS_TO_TEST:
         print(f"  Testing limit={limit}...", end=" ", flush=True)
-        result = await test_api_direct(limit, query="ley")
+        result = await _run_api_direct_test(limit, query="ley")
         results_simple.append(result)
         print(f"{result.status} ({result.time_seconds:.2f}s)")
         await asyncio.sleep(0.5)  # Pausa entre requests
@@ -322,7 +322,7 @@ async def run_all_tests(include_mcp: bool = False):
     results_daterange = []
     for limit in LIMITS_TO_TEST:
         print(f"  Testing limit={limit} con fecha_publicacion...", end=" ", flush=True)
-        result = await test_api_with_date_range(limit)
+        result = await _run_api_with_date_range_test(limit)
         results_daterange.append(result)
         print(f"{result.status} ({result.time_seconds:.2f}s)")
         await asyncio.sleep(0.5)

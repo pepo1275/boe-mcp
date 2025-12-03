@@ -16,21 +16,42 @@ from .base import ValidationError
 BOE_IDENTIFIER_PATTERN = re.compile(r'^BOE-[AB]-\d{4}-\d{1,6}$')
 
 # Valid block_id patterns (whitelist approach)
+# Updated based on real BOE data analysis (BOE-A-2020-4859 Ley Concursal)
 BLOCK_ID_PATTERNS = [
-    re.compile(r'^a\d{1,4}$'),       # Articles: a1, a22, a100, a1234
-    re.compile(r'^da\d{1,2}$'),      # Additional dispositions: da1, da10
-    re.compile(r'^dt\d{1,2}$'),      # Transitory dispositions: dt1, dt10
-    re.compile(r'^dd\d?$'),          # Derogatory dispositions: dd, dd1
-    re.compile(r'^df\d{0,2}$'),      # Final dispositions: df, df1, df10
-    re.compile(r'^pr$'),             # Preamble
-    re.compile(r'^fi$'),             # Signature
-    re.compile(r'^an\d?$'),          # Annexes: an, an1
-    re.compile(r'^no$'),             # Initial note
-    re.compile(r'^in$'),             # Index
-    re.compile(r'^ex$'),             # Exposition
-    re.compile(r'^ti\d{1,2}$'),      # Titles: ti1, ti10
-    re.compile(r'^ca\d{1,2}$'),      # Chapters: ca1, ca10
-    re.compile(r'^se\d{1,2}$'),      # Sections: se1, se10
+    # Articles: a1, a22, a1-2 (art 10), a3-112 (art 37 bis)
+    re.compile(r'^a\d{1,4}(-\d{1,4})?$'),
+    # Additional dispositions: da, da-2, da-3
+    re.compile(r'^da(-\d{1,2})?$'),
+    # Transitory dispositions: dt, dt-2
+    re.compile(r'^dt(-\d{1,2})?$'),
+    # Derogatory dispositions: dd, dd-2
+    re.compile(r'^dd(-\d{1,2})?$'),
+    # Final dispositions: df, df-2
+    re.compile(r'^df(-\d{1,2})?$'),
+    # Preamble
+    re.compile(r'^pr$'),
+    # Signature
+    re.compile(r'^fi$'),
+    # Annexes: an, an1, an-2
+    re.compile(r'^an\d?(-\d{1,2})?$'),
+    # Initial note
+    re.compile(r'^no$'),
+    # Index
+    re.compile(r'^in$'),
+    # Exposition
+    re.compile(r'^ex$'),
+    # Artículo único
+    re.compile(r'^au$'),
+    # Texto (título de la ley)
+    re.compile(r'^te$'),
+    # Books: lp (libro primero), ls (libro segundo), lp-2
+    re.compile(r'^l[ps](-\d{1,2})?$'),
+    # Titles: ti, ti-2, ti-3
+    re.compile(r'^ti(-\d{1,2})?$'),
+    # Chapters: ci, ci-2, cv, cv-2 (capítulo quinto)
+    re.compile(r'^c[iv](-\d{1,2})?$'),
+    # Sections and subsections: s1, s2-3, s4-16
+    re.compile(r'^s\d{1,2}(-\d{1,2})?$'),
 ]
 
 

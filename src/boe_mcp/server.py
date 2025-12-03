@@ -1,4 +1,6 @@
 import json
+import re
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any, Literal, Union, Annotated
 import httpx
@@ -15,6 +17,7 @@ from boe_mcp.validators import (
     validate_date_range,
     validate_query_value,
     validate_codigo,
+    validate_articulo,
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -442,6 +445,927 @@ async def get_law_section(
         return f"No se pudo recuperar la sección '{section}' de la norma {identifier}."
 
     return data
+
+# ----------- 1.5 NAVEGACIÓN INTELIGENTE v2.0 ---------------
+
+
+def _reconstruir_ubicacion(bloques: list, indice_objetivo: int) -> dict:
+    """
+    Reconstruye la jerarquía de ubicación de un artículo.
+
+    Recorre los bloques anteriores al artículo objetivo para encontrar
+    la estructura jerárquica: libro → título → capítulo → sección.
+
+    Args:
+        bloques: Lista de elementos XML de bloques
+        indice_objetivo: Índice del bloque objetivo en la lista
+
+    Returns:
+        Dict con keys: libro, titulo, capitulo, seccion (valores str o None)
+    """
+    ubicacion = {
+        "libro": None,
+        "titulo": None,
+        "capitulo": None,
+        "seccion": None
+    }
+
+    for i, bloque in enumerate(bloques):
+        if i >= indice_objetivo:
+            break
+
+        id_elem = bloque.find("id")
+        titulo_elem = bloque.find("titulo")
+
+        if id_elem is None or titulo_elem is None:
+            continue
+
+        id_bloque = id_elem.text or ""
+        titulo_bloque = titulo_elem.text or ""
+
+        # Libro: lp (libro primero), ls (libro segundo)
+        if id_bloque.startswith("lp") or id_bloque.startswith("ls"):
+            ubicacion["libro"] = titulo_bloque
+            ubicacion["titulo"] = None  # Reset niveles inferiores
+            ubicacion["capitulo"] = None
+            ubicacion["seccion"] = None
+        # Título: ti, ti-2, ti-3
+        elif id_bloque.startswith("ti"):
+            ubicacion["titulo"] = titulo_bloque
+            ubicacion["capitulo"] = None
+            ubicacion["seccion"] = None
+        # Capítulo: ci, cv (capítulo quinto), etc.
+        elif id_bloque.startswith("ci") or id_bloque.startswith("cv"):
+            ubicacion["capitulo"] = titulo_bloque
+            ubicacion["seccion"] = None
+        # Sección: s1, s2-3, s4-16 (no artículos que empiezan con 'a')
+        elif id_bloque.startswith("s"):
+            # Verificar que es sección (sN o sN-N) y no otra cosa
+            if re.match(r'^s\d', id_bloque):
+                ubicacion["seccion"] = titulo_bloque
+
+    return ubicacion
+
+
+def _extraer_texto_de_bloque_xml(bloque_xml: str) -> str:
+    """
+    Extrae el texto limpio de un bloque XML.
+
+    Args:
+        bloque_xml: String XML del bloque
+
+    Returns:
+        Texto del artículo sin tags XML
+    """
+    try:
+        root = ET.fromstring(bloque_xml)
+        # Buscar el elemento texto o extraer todo el texto
+        texto_elem = root.find(".//texto")
+        if texto_elem is not None:
+            # Extraer todo el texto incluyendo hijos
+            return "".join(texto_elem.itertext()).strip()
+        # Fallback: extraer todo el texto del root
+        return "".join(root.itertext()).strip()
+    except ET.ParseError:
+        return bloque_xml  # Devolver el XML original si falla
+
+
+@mcp.tool()
+async def get_article_info(
+    identifier: str,
+    articulo: str,
+    incluir_texto: bool = False
+) -> dict:
+    """
+    Obtiene información detallada de un artículo específico dentro de una ley.
+
+    Esta herramienta permite consultar artículos individuales de leyes extensas
+    sin necesidad de descargar el documento completo. Ideal para:
+    - Verificar si un artículo fue modificado y cuándo
+    - Obtener la ubicación jerárquica del artículo (libro, título, capítulo)
+    - Acceder al texto del artículo de forma eficiente
+
+    Args:
+        identifier: ID BOE de la ley (ej. "BOE-A-2020-4859" para Ley Concursal)
+        articulo: Número del artículo a consultar. Formatos válidos:
+            - Número simple: "1", "386"
+            - Con sufijo latino: "224 bis", "37 quater"
+            - Artículo único: "único"
+        incluir_texto: Si True, incluye el texto completo del artículo (default: False)
+
+    Returns:
+        Diccionario con información del artículo:
+        - identifier: ID de la ley
+        - articulo: Número consultado
+        - block_id: ID del bloque en la API BOE
+        - titulo_completo: Título del artículo (ej. "Artículo 386. Legitimación")
+        - fecha_actualizacion: Fecha de última modificación (AAAAMMDD)
+        - fecha_ley_original: Fecha de publicación original de la ley
+        - modificado: True si el artículo fue modificado después de la publicación
+        - ubicacion: Dict con libro, titulo, capitulo, seccion (o None)
+        - url_bloque: URL directa al bloque en la API BOE
+        - texto: Texto del artículo (solo si incluir_texto=True)
+
+        En caso de error:
+        - error: True
+        - codigo: "VALIDATION_ERROR" | "LEY_NO_ENCONTRADA" | "ARTICULO_NO_ENCONTRADO" | "ERROR_PARSING"
+        - mensaje: Descripción del error
+
+    Examples:
+        >>> get_article_info("BOE-A-2020-4859", "386")
+        {"articulo": "386", "modificado": True, "ubicacion": {"libro": "LIBRO TERCERO", ...}}
+
+        >>> get_article_info("BOE-A-2020-4859", "224 bis", incluir_texto=True)
+        {"articulo": "224 bis", "texto": "El acreedor podrá...", ...}
+    """
+    # 1. VALIDACIÓN
+    try:
+        identifier = validate_boe_identifier(identifier)
+        articulo = validate_articulo(articulo)
+    except ValidationError as e:
+        return {
+            "error": True,
+            "codigo": "VALIDATION_ERROR",
+            "mensaje": str(e),
+            "detalles": None
+        }
+
+    # 2. OBTENER ÍNDICE DE LA LEY
+    base = f"/datosabiertos/api/legislacion-consolidada/id/{identifier}"
+    indice_endpoint = f"{base}/texto/indice"
+
+    indice_xml = await make_boe_raw_request(indice_endpoint, accept="application/xml")
+
+    if indice_xml is None:
+        return {
+            "error": True,
+            "codigo": "LEY_NO_ENCONTRADA",
+            "mensaje": f"No se pudo recuperar la ley {identifier}",
+            "detalles": {"identifier": identifier}
+        }
+
+    # 3. PARSEAR XML
+    try:
+        root = ET.fromstring(indice_xml)
+        bloques = root.findall(".//bloque")
+    except ET.ParseError as e:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "Error procesando respuesta de la API",
+            "detalles": {"error_xml": str(e)}
+        }
+
+    if not bloques:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "La ley no contiene bloques de texto",
+            "detalles": None
+        }
+
+    # 4. BUSCAR ARTÍCULO
+    # Normalizar el patrón de búsqueda
+    # Manejar "único" como caso especial
+    if articulo.lower() == "único":
+        patron_titulo = "artículo único"
+    else:
+        patron_titulo = f"artículo {articulo}"
+
+    bloque_encontrado = None
+    indice_encontrado = -1
+
+    for i, bloque in enumerate(bloques):
+        titulo_elem = bloque.find("titulo")
+        if titulo_elem is None or titulo_elem.text is None:
+            continue
+
+        titulo = titulo_elem.text.lower()
+
+        # Buscar coincidencia al inicio del título
+        if titulo.startswith(patron_titulo):
+            # Verificar que es el artículo exacto (no "Artículo 38" cuando buscamos "Artículo 3")
+            # El título debe ser "Artículo N." o "Artículo N " o "Artículo N<fin>"
+            siguiente_char_idx = len(patron_titulo)
+            if siguiente_char_idx < len(titulo):
+                siguiente_char = titulo[siguiente_char_idx]
+                # El siguiente carácter debe ser punto, espacio o fin de línea
+                if siguiente_char not in ".  ":
+                    continue
+
+            bloque_encontrado = bloque
+            indice_encontrado = i
+            break
+
+    if bloque_encontrado is None:
+        return {
+            "error": True,
+            "codigo": "ARTICULO_NO_ENCONTRADO",
+            "mensaje": f"No se encontró el artículo {articulo} en {identifier}",
+            "detalles": {"identifier": identifier, "articulo": articulo}
+        }
+
+    # 5. EXTRAER DATOS DEL BLOQUE
+    block_id_elem = bloque_encontrado.find("id")
+    titulo_completo_elem = bloque_encontrado.find("titulo")
+    fecha_actualizacion_elem = bloque_encontrado.find("fecha_actualizacion")
+    url_elem = bloque_encontrado.find("url_bloque")
+
+    block_id = block_id_elem.text if block_id_elem is not None else ""
+    titulo_completo = titulo_completo_elem.text if titulo_completo_elem is not None else ""
+    fecha_actualizacion = fecha_actualizacion_elem.text if fecha_actualizacion_elem is not None else ""
+    url_bloque = url_elem.text if url_elem is not None else f"{BOE_API_BASE}{base}/texto/bloque/{block_id}"
+
+    # 6. OBTENER FECHA ORIGINAL DE LA LEY
+    # La fecha más antigua entre todos los bloques es la fecha original
+    fechas = []
+    for bloque in bloques:
+        fecha_elem = bloque.find("fecha_actualizacion")
+        if fecha_elem is not None and fecha_elem.text:
+            fechas.append(fecha_elem.text)
+
+    fecha_ley_original = min(fechas) if fechas else fecha_actualizacion
+
+    # 7. DETERMINAR SI FUE MODIFICADO
+    modificado = fecha_actualizacion > fecha_ley_original if fecha_actualizacion and fecha_ley_original else False
+
+    # 8. RECONSTRUIR UBICACIÓN JERÁRQUICA
+    ubicacion = _reconstruir_ubicacion(bloques, indice_encontrado)
+
+    # 9. OBTENER TEXTO SI SE SOLICITA
+    texto = None
+    if incluir_texto and block_id:
+        bloque_endpoint = f"{base}/texto/bloque/{block_id}"
+        bloque_xml = await make_boe_raw_request(bloque_endpoint, accept="application/xml")
+        if bloque_xml:
+            texto = _extraer_texto_de_bloque_xml(bloque_xml)
+
+    # 10. RETORNAR RESULTADO
+    return {
+        "identifier": identifier,
+        "articulo": articulo,
+        "block_id": block_id,
+        "titulo_completo": titulo_completo,
+        "fecha_actualizacion": fecha_actualizacion,
+        "fecha_ley_original": fecha_ley_original,
+        "modificado": modificado,
+        "ubicacion": ubicacion,
+        "url_bloque": url_bloque,
+        "texto": texto
+    }
+
+
+def _es_libro(id_bloque: str) -> bool:
+    """Check if block ID is a book (lp, ls, lp-2, etc.)."""
+    return id_bloque.startswith("lp") or id_bloque.startswith("ls")
+
+
+def _es_titulo(id_bloque: str) -> bool:
+    """Check if block ID is a title (ti, ti-2, etc.)."""
+    return id_bloque.startswith("ti")
+
+
+def _es_capitulo(id_bloque: str) -> bool:
+    """Check if block ID is a chapter (ci, cv, ci-2, etc.)."""
+    return id_bloque.startswith("ci") or id_bloque.startswith("cv")
+
+
+def _es_articulo(id_bloque: str) -> bool:
+    """Check if block ID is an article (a1, a2, a3-72, etc.)."""
+    return re.match(r'^a\d', id_bloque) is not None
+
+
+def _extraer_numero_articulo(titulo: str) -> str:
+    """
+    Extrae el número de artículo de un título.
+
+    Args:
+        titulo: Título del artículo (ej. "Artículo 386. Legitimación")
+
+    Returns:
+        Número del artículo (ej. "386", "224 bis", "único")
+    """
+    titulo_lower = titulo.lower()
+
+    # Caso especial: artículo único
+    if "artículo único" in titulo_lower:
+        return "único"
+
+    # Patrón: "Artículo N" o "Artículo N sufijo"
+    match = re.match(r'^artículo\s+(\d+(?:\s+(?:bis|ter|quater|quinquies|sexies|septies|octies|nonies|decies))?)',
+                     titulo_lower)
+    if match:
+        return match.group(1)
+
+    return ""
+
+
+@mcp.tool()
+async def search_in_law(
+    identifier: str,
+    query: str | None = None,
+    articulos: list[str] | None = None,
+    solo_modificados: bool = False,
+    modificados_desde: str | None = None,
+    modificados_hasta: str | None = None,
+    limit: int = 50,
+    offset: int = 0
+) -> dict:
+    """
+    Busca artículos dentro de una ley que coincidan con criterios específicos.
+
+    Permite filtrar artículos de una ley por múltiples criterios combinables:
+    texto en título, lista de artículos específicos, estado de modificación
+    y rango de fechas.
+
+    Args:
+        identifier: ID BOE de la ley (ej. "BOE-A-2020-4859")
+        query: Texto a buscar en los títulos de los artículos (case-insensitive)
+        articulos: Lista de números de artículos a buscar (ej. ["1", "2", "386"])
+        solo_modificados: Si True, solo devuelve artículos que fueron modificados
+        modificados_desde: Fecha mínima de modificación (AAAAMMDD)
+        modificados_hasta: Fecha máxima de modificación (AAAAMMDD)
+        limit: Máximo de resultados a devolver (1-200, default: 50)
+        offset: Índice inicial para paginación (default: 0)
+
+    Returns:
+        Diccionario con:
+        - identifier: ID de la ley
+        - criterios: Dict con los criterios de búsqueda aplicados
+        - total_encontrados: Número total de artículos que coinciden
+        - offset: Índice inicial usado
+        - limit: Límite usado
+        - hay_mas: True si hay más resultados disponibles
+        - resultados: Lista de artículos encontrados con:
+            - articulo: Número del artículo
+            - block_id: ID del bloque en la API
+            - titulo: Título completo del artículo
+            - fecha_actualizacion: Fecha de última modificación
+            - modificado: True si fue modificado después de la publicación
+
+        En caso de error:
+        - error: True
+        - codigo: "VALIDATION_ERROR" | "SIN_CRITERIOS" | "LEY_NO_ENCONTRADA" | "RANGO_FECHAS_INVALIDO"
+        - mensaje: Descripción del error
+
+    Examples:
+        >>> search_in_law("BOE-A-2020-4859", solo_modificados=True)
+        {"total_encontrados": 150, "resultados": [...]}
+
+        >>> search_in_law("BOE-A-2020-4859", query="legitimación")
+        {"total_encontrados": 5, "resultados": [...]}
+
+        >>> search_in_law("BOE-A-2020-4859", articulos=["1", "2", "386"])
+        {"total_encontrados": 3, "resultados": [...]}
+    """
+    # 1. VALIDACIÓN
+    try:
+        identifier = validate_boe_identifier(identifier)
+
+        if query:
+            query = validate_query_value(query)
+
+        if articulos:
+            articulos = [validate_articulo(a) for a in articulos]
+
+        if modificados_desde:
+            modificados_desde = validate_fecha(modificados_desde)
+
+        if modificados_hasta:
+            modificados_hasta = validate_fecha(modificados_hasta)
+
+    except ValidationError as e:
+        return {
+            "error": True,
+            "codigo": "VALIDATION_ERROR",
+            "mensaje": str(e),
+            "detalles": None
+        }
+
+    # Validar rango de fechas
+    if modificados_desde and modificados_hasta and modificados_desde > modificados_hasta:
+        return {
+            "error": True,
+            "codigo": "RANGO_FECHAS_INVALIDO",
+            "mensaje": "modificados_desde no puede ser posterior a modificados_hasta",
+            "detalles": {"desde": modificados_desde, "hasta": modificados_hasta}
+        }
+
+    # Validar que hay al menos un criterio
+    if not (query or articulos or solo_modificados or modificados_desde):
+        return {
+            "error": True,
+            "codigo": "SIN_CRITERIOS",
+            "mensaje": "Debe proporcionar al menos un criterio: query, articulos, solo_modificados o modificados_desde",
+            "detalles": None
+        }
+
+    # Validar límites
+    limit = min(max(limit, 1), 200)
+    offset = max(offset, 0)
+
+    # 2. OBTENER ÍNDICE DE LA LEY
+    base = f"/datosabiertos/api/legislacion-consolidada/id/{identifier}"
+    indice_endpoint = f"{base}/texto/indice"
+
+    indice_xml = await make_boe_raw_request(indice_endpoint, accept="application/xml")
+
+    if indice_xml is None:
+        return {
+            "error": True,
+            "codigo": "LEY_NO_ENCONTRADA",
+            "mensaje": f"No se pudo recuperar la ley {identifier}",
+            "detalles": {"identifier": identifier}
+        }
+
+    # 3. PARSEAR XML
+    try:
+        root = ET.fromstring(indice_xml)
+        bloques = root.findall(".//bloque")
+    except ET.ParseError as e:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "Error procesando respuesta de la API",
+            "detalles": {"error_xml": str(e)}
+        }
+
+    if not bloques:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "La ley no contiene bloques de texto",
+            "detalles": None
+        }
+
+    # Obtener fecha original de la ley
+    fechas = []
+    for bloque in bloques:
+        fecha_elem = bloque.find("fecha_actualizacion")
+        if fecha_elem is not None and fecha_elem.text:
+            fechas.append(fecha_elem.text)
+
+    fecha_ley_original = min(fechas) if fechas else ""
+
+    # 4. FILTRAR ARTÍCULOS
+    resultados = []
+
+    for bloque in bloques:
+        titulo_elem = bloque.find("titulo")
+        if titulo_elem is None or titulo_elem.text is None:
+            continue
+
+        titulo = titulo_elem.text
+        titulo_lower = titulo.lower()
+
+        # Solo procesar bloques que son artículos
+        if not titulo_lower.startswith("artículo"):
+            continue
+
+        id_elem = bloque.find("id")
+        fecha_elem = bloque.find("fecha_actualizacion")
+
+        block_id = id_elem.text if id_elem is not None else ""
+        fecha_actualizacion = fecha_elem.text if fecha_elem is not None else ""
+
+        num_articulo = _extraer_numero_articulo(titulo)
+        es_modificado = fecha_actualizacion > fecha_ley_original if fecha_actualizacion and fecha_ley_original else False
+
+        # Aplicar filtros
+
+        # Filtro por lista de artículos específicos
+        if articulos and num_articulo not in articulos:
+            continue
+
+        # Filtro por query en título
+        if query and query.lower() not in titulo_lower:
+            continue
+
+        # Filtro por solo modificados
+        if solo_modificados and not es_modificado:
+            continue
+
+        # Filtro por fecha desde
+        if modificados_desde and fecha_actualizacion < modificados_desde:
+            continue
+
+        # Filtro por fecha hasta
+        if modificados_hasta and fecha_actualizacion > modificados_hasta:
+            continue
+
+        resultados.append({
+            "articulo": num_articulo,
+            "block_id": block_id,
+            "titulo": titulo,
+            "fecha_actualizacion": fecha_actualizacion,
+            "modificado": es_modificado
+        })
+
+    # 5. PAGINAR
+    total = len(resultados)
+    resultados_paginados = resultados[offset:offset + limit]
+    hay_mas = (offset + limit) < total
+
+    # 6. RETORNAR
+    return {
+        "identifier": identifier,
+        "criterios": {
+            "query": query,
+            "articulos": articulos,
+            "solo_modificados": solo_modificados,
+            "modificados_desde": modificados_desde,
+            "modificados_hasta": modificados_hasta
+        },
+        "total_encontrados": total,
+        "offset": offset,
+        "limit": limit,
+        "hay_mas": hay_mas,
+        "resultados": resultados_paginados
+    }
+
+
+@mcp.tool()
+async def get_law_structure_summary(
+    identifier: str,
+    nivel: Literal["libros", "titulos", "capitulos"] = "capitulos"
+) -> dict:
+    """
+    Obtiene un resumen compacto de la estructura jerárquica de una ley.
+
+    Devuelve la organización de la ley (libros, títulos, capítulos) sin
+    incluir artículos individuales. Útil para entender la estructura de
+    leyes extensas antes de navegar a secciones específicas.
+
+    Args:
+        identifier: ID BOE de la ley (ej. "BOE-A-2020-4859")
+        nivel: Profundidad de la estructura a devolver:
+            - "libros": Solo libros (nivel más alto)
+            - "titulos": Libros y títulos
+            - "capitulos": Libros, títulos y capítulos (default)
+
+    Returns:
+        Diccionario con:
+        - identifier: ID de la ley
+        - titulo: Título completo de la ley
+        - fecha_publicacion: Fecha de publicación original
+        - total_articulos: Número total de artículos
+        - total_modificados: Artículos modificados
+        - estructura: Lista jerárquica con:
+            - id: ID del bloque
+            - tipo: "libro" | "titulo" | "capitulo"
+            - titulo: Texto del título
+            - num_articulos: Artículos en esta sección
+            - num_modificados: Artículos modificados en esta sección
+            - hijos: Subestructura (si aplica según nivel)
+
+        En caso de error:
+        - error: True
+        - codigo: "VALIDATION_ERROR" | "LEY_NO_ENCONTRADA"
+        - mensaje: Descripción del error
+
+    Examples:
+        >>> get_law_structure_summary("BOE-A-2020-4859")
+        {"titulo": "Ley Concursal", "estructura": [{"tipo": "libro", ...}]}
+
+        >>> get_law_structure_summary("BOE-A-2020-4859", nivel="libros")
+        {"estructura": [{"tipo": "libro", "hijos": []}]}
+    """
+    # 1. VALIDACIÓN
+    try:
+        identifier = validate_boe_identifier(identifier)
+    except ValidationError as e:
+        return {
+            "error": True,
+            "codigo": "VALIDATION_ERROR",
+            "mensaje": str(e),
+            "detalles": None
+        }
+
+    # 2. OBTENER ÍNDICE DE LA LEY
+    base = f"/datosabiertos/api/legislacion-consolidada/id/{identifier}"
+    indice_endpoint = f"{base}/texto/indice"
+
+    indice_xml = await make_boe_raw_request(indice_endpoint, accept="application/xml")
+
+    if indice_xml is None:
+        return {
+            "error": True,
+            "codigo": "LEY_NO_ENCONTRADA",
+            "mensaje": f"No se pudo recuperar la ley {identifier}",
+            "detalles": {"identifier": identifier}
+        }
+
+    # 3. PARSEAR XML
+    try:
+        root = ET.fromstring(indice_xml)
+        bloques = root.findall(".//bloque")
+    except ET.ParseError as e:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "Error procesando respuesta de la API",
+            "detalles": {"error_xml": str(e)}
+        }
+
+    if not bloques:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "La ley no contiene bloques de texto",
+            "detalles": None
+        }
+
+    # Obtener fecha original de la ley
+    fechas = []
+    for bloque in bloques:
+        fecha_elem = bloque.find("fecha_actualizacion")
+        if fecha_elem is not None and fecha_elem.text:
+            fechas.append(fecha_elem.text)
+
+    fecha_original = min(fechas) if fechas else ""
+
+    # 4. EXTRAER TÍTULO DE LA LEY (bloque con id="te")
+    titulo_ley = ""
+    for bloque in bloques:
+        id_elem = bloque.find("id")
+        if id_elem is not None and id_elem.text == "te":
+            titulo_elem = bloque.find("titulo")
+            if titulo_elem is not None:
+                titulo_ley = titulo_elem.text or ""
+            break
+
+    # Si no hay bloque "te", buscar el primer título significativo
+    if not titulo_ley:
+        for bloque in bloques:
+            titulo_elem = bloque.find("titulo")
+            if titulo_elem is not None and titulo_elem.text:
+                titulo_ley = titulo_elem.text
+                break
+
+    # 5. CONSTRUIR ESTRUCTURA JERÁRQUICA
+    estructura = []
+    libro_actual = None
+    titulo_actual = None
+    capitulo_actual = None
+
+    total_articulos = 0
+    total_modificados = 0
+
+    for bloque in bloques:
+        id_elem = bloque.find("id")
+        titulo_elem = bloque.find("titulo")
+        fecha_elem = bloque.find("fecha_actualizacion")
+
+        if id_elem is None or titulo_elem is None:
+            continue
+
+        id_bloque = id_elem.text or ""
+        titulo_bloque = titulo_elem.text or ""
+        fecha_bloque = fecha_elem.text if fecha_elem is not None else ""
+
+        if _es_libro(id_bloque):
+            libro_actual = {
+                "id": id_bloque,
+                "tipo": "libro",
+                "titulo": titulo_bloque,
+                "num_articulos": 0,
+                "num_modificados": 0,
+                "hijos": []
+            }
+            estructura.append(libro_actual)
+            titulo_actual = None
+            capitulo_actual = None
+
+        elif _es_titulo(id_bloque) and nivel in ["titulos", "capitulos"]:
+            titulo_actual = {
+                "id": id_bloque,
+                "tipo": "titulo",
+                "titulo": titulo_bloque,
+                "num_articulos": 0,
+                "num_modificados": 0,
+                "hijos": []
+            }
+            if libro_actual:
+                libro_actual["hijos"].append(titulo_actual)
+            else:
+                estructura.append(titulo_actual)
+            capitulo_actual = None
+
+        elif _es_capitulo(id_bloque) and nivel == "capitulos":
+            capitulo_actual = {
+                "id": id_bloque,
+                "tipo": "capitulo",
+                "titulo": titulo_bloque,
+                "num_articulos": 0,
+                "num_modificados": 0,
+                "hijos": []
+            }
+            if titulo_actual:
+                titulo_actual["hijos"].append(capitulo_actual)
+            elif libro_actual:
+                libro_actual["hijos"].append(capitulo_actual)
+            else:
+                estructura.append(capitulo_actual)
+
+        elif _es_articulo(id_bloque):
+            es_modificado = fecha_bloque > fecha_original if fecha_bloque and fecha_original else False
+
+            total_articulos += 1
+            if es_modificado:
+                total_modificados += 1
+
+            # Incrementar contadores en la jerarquía
+            if capitulo_actual:
+                capitulo_actual["num_articulos"] += 1
+                if es_modificado:
+                    capitulo_actual["num_modificados"] += 1
+
+            if titulo_actual:
+                titulo_actual["num_articulos"] += 1
+                if es_modificado:
+                    titulo_actual["num_modificados"] += 1
+
+            if libro_actual:
+                libro_actual["num_articulos"] += 1
+                if es_modificado:
+                    libro_actual["num_modificados"] += 1
+
+    # 6. RETORNAR
+    return {
+        "identifier": identifier,
+        "titulo": titulo_ley,
+        "fecha_publicacion": fecha_original,
+        "total_articulos": total_articulos,
+        "total_modificados": total_modificados,
+        "estructura": estructura
+    }
+
+
+def _es_disposicion(id_bloque: str) -> bool:
+    """Check if block ID is a disposition (da, dt, dd, df)."""
+    return (id_bloque.startswith("da") or id_bloque.startswith("dt") or
+            id_bloque.startswith("dd") or id_bloque.startswith("df"))
+
+
+def _es_estructura(id_bloque: str) -> bool:
+    """Check if block ID is structural (libro, título, capítulo, sección)."""
+    return (_es_libro(id_bloque) or _es_titulo(id_bloque) or
+            _es_capitulo(id_bloque) or re.match(r'^s\d', id_bloque) is not None)
+
+
+@mcp.tool()
+async def get_law_index(
+    identifier: str,
+    tipo_bloque: Literal["todos", "estructura", "articulos", "disposiciones"] = "todos",
+    limit: int = 100,
+    offset: int = 0
+) -> dict:
+    """
+    Obtiene el índice de una ley con soporte para paginación y filtrado.
+
+    Devuelve una lista paginada de bloques de la ley, filtrable por tipo.
+    Útil para navegar leyes extensas de forma eficiente.
+
+    Args:
+        identifier: ID BOE de la ley (ej. "BOE-A-2020-4859")
+        tipo_bloque: Tipo de bloques a incluir:
+            - "todos": Todos los bloques (default)
+            - "estructura": Solo libros, títulos, capítulos y secciones
+            - "articulos": Solo artículos
+            - "disposiciones": Solo disposiciones (adicionales, transitorias, etc.)
+        limit: Máximo de bloques a devolver (1-500, default: 100)
+        offset: Índice inicial para paginación (default: 0)
+
+    Returns:
+        Diccionario con:
+        - identifier: ID de la ley
+        - tipo_bloque: Filtro aplicado
+        - total_bloques: Total de bloques que coinciden con el filtro
+        - offset: Índice inicial usado
+        - limit: Límite usado
+        - hay_mas: True si hay más bloques disponibles
+        - bloques: Lista de bloques con:
+            - id: ID del bloque
+            - titulo: Título del bloque
+            - fecha_actualizacion: Fecha de última modificación
+            - url: URL del bloque en la API BOE
+
+        En caso de error:
+        - error: True
+        - codigo: "VALIDATION_ERROR" | "LEY_NO_ENCONTRADA"
+        - mensaje: Descripción del error
+
+    Examples:
+        >>> get_law_index("BOE-A-2020-4859", limit=50)
+        {"total_bloques": 800, "bloques": [...], "hay_mas": True}
+
+        >>> get_law_index("BOE-A-2020-4859", tipo_bloque="articulos", limit=100)
+        {"total_bloques": 752, "bloques": [...]}
+
+        >>> get_law_index("BOE-A-2020-4859", tipo_bloque="estructura")
+        {"total_bloques": 45, "bloques": [{"tipo": "libro", ...}]}
+    """
+    # 1. VALIDACIÓN
+    try:
+        identifier = validate_boe_identifier(identifier)
+    except ValidationError as e:
+        return {
+            "error": True,
+            "codigo": "VALIDATION_ERROR",
+            "mensaje": str(e),
+            "detalles": None
+        }
+
+    # Validar límites
+    limit = min(max(limit, 1), 500)
+    offset = max(offset, 0)
+
+    # 2. OBTENER ÍNDICE DE LA LEY
+    base = f"/datosabiertos/api/legislacion-consolidada/id/{identifier}"
+    indice_endpoint = f"{base}/texto/indice"
+
+    indice_xml = await make_boe_raw_request(indice_endpoint, accept="application/xml")
+
+    if indice_xml is None:
+        return {
+            "error": True,
+            "codigo": "LEY_NO_ENCONTRADA",
+            "mensaje": f"No se pudo recuperar la ley {identifier}",
+            "detalles": {"identifier": identifier}
+        }
+
+    # 3. PARSEAR XML
+    try:
+        root = ET.fromstring(indice_xml)
+        bloques = root.findall(".//bloque")
+    except ET.ParseError as e:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "Error procesando respuesta de la API",
+            "detalles": {"error_xml": str(e)}
+        }
+
+    if not bloques:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "La ley no contiene bloques de texto",
+            "detalles": None
+        }
+
+    # 4. FILTRAR BLOQUES
+    bloques_filtrados = []
+
+    for bloque in bloques:
+        id_elem = bloque.find("id")
+        titulo_elem = bloque.find("titulo")
+        fecha_elem = bloque.find("fecha_actualizacion")
+        url_elem = bloque.find("url_bloque")
+
+        if id_elem is None or titulo_elem is None:
+            continue
+
+        id_bloque = id_elem.text or ""
+        titulo_bloque = titulo_elem.text or ""
+        fecha_bloque = fecha_elem.text if fecha_elem is not None else ""
+        url_bloque = url_elem.text if url_elem is not None else f"{BOE_API_BASE}{base}/texto/bloque/{id_bloque}"
+
+        # Aplicar filtro según tipo_bloque
+        if tipo_bloque == "articulos":
+            if not _es_articulo(id_bloque):
+                continue
+        elif tipo_bloque == "estructura":
+            if not _es_estructura(id_bloque):
+                continue
+        elif tipo_bloque == "disposiciones":
+            if not _es_disposicion(id_bloque):
+                continue
+        # "todos" no filtra nada
+
+        bloques_filtrados.append({
+            "id": id_bloque,
+            "titulo": titulo_bloque,
+            "fecha_actualizacion": fecha_bloque,
+            "url": url_bloque
+        })
+
+    # 5. PAGINAR
+    total = len(bloques_filtrados)
+    bloques_paginados = bloques_filtrados[offset:offset + limit]
+    hay_mas = (offset + limit) < total
+
+    # 6. RETORNAR
+    return {
+        "identifier": identifier,
+        "tipo_bloque": tipo_bloque,
+        "total_bloques": total,
+        "offset": offset,
+        "limit": limit,
+        "hay_mas": hay_mas,
+        "bloques": bloques_paginados
+    }
+
 
 # ----------- 2. SUMARIO BOE -------------------------------
 
