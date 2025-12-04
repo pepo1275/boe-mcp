@@ -642,7 +642,8 @@ async def get_article_info(
         if titulo_elem is None or titulo_elem.text is None:
             continue
 
-        titulo = titulo_elem.text.lower()
+        # Normalizar: convertir a minúsculas y reemplazar non-breaking space (\xa0) por espacio normal
+        titulo = titulo_elem.text.lower().replace('\xa0', ' ')
 
         # Buscar coincidencia al inicio del título
         if titulo.startswith(patron_titulo):
