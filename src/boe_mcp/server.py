@@ -652,7 +652,7 @@ async def get_article_info(
             if siguiente_char_idx < len(titulo):
                 siguiente_char = titulo[siguiente_char_idx]
                 # El siguiente carácter debe ser punto, espacio o fin de línea
-                if siguiente_char not in ".  ":
+                if siguiente_char not in ". ":
                     continue
 
             bloque_encontrado = bloque
