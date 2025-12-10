@@ -1,7 +1,7 @@
 # Guía de Uso de Herramientas BOE-MCP
 
-**Versión:** v1.5.0
-**Fecha:** 2025-12-03
+**Versión:** v1.6.0
+**Fecha:** 2025-12-10
 **Propósito:** Documento de referencia para selección de herramientas según caso de uso.
 
 ---
@@ -17,6 +17,7 @@
 | `get_law_structure_summary` | Estructura de ley | Ver índice compacto de una norma |
 | `get_law_index` | Índice paginado | Navegar estructura con paginación |
 | `get_article_info` | Info de artículo | Detalles de artículo específico |
+| `get_article_modifications` | Modificaciones de artículo | Verificar si artículo fue modificado |
 | `search_in_law` | Buscar en ley | Encontrar texto dentro de una norma |
 
 ### Herramientas de Sumarios BOE (Smart Summary v1.5.0)
@@ -94,7 +95,35 @@
 
 ---
 
-### Caso 4: "Buscar dentro de una ley"
+### Caso 4: "¿Ha sido modificado el artículo X?"
+
+**Ejemplos:**
+- "¿Ha cambiado el artículo 28 de la Ley 39/2015?"
+- "Verificar si el artículo 53 sigue vigente tal como estaba"
+
+**Flujo recomendado:**
+```
+1. get_article_modifications(identifier="BOE-A-2015-10565", articulo="28")
+   → modificado: true/false, total_versiones, lista de modificaciones
+
+Si necesita el texto actual:
+2. get_article_info(identifier, articulo)
+   → Texto completo vigente del artículo
+```
+
+**Caso de uso: Auditoría de procedimiento:**
+```
+Usuario: "Voy a revisar un procedimiento que usa los artículos 21, 28 y 53
+de la Ley 39/2015. ¿Alguno ha cambiado?"
+
+→ get_article_modifications("BOE-A-2015-10565", "21")  # Sin cambios
+→ get_article_modifications("BOE-A-2015-10565", "28")  # Modificado 2018 ⚠️
+→ get_article_modifications("BOE-A-2015-10565", "53")  # Sin cambios
+```
+
+---
+
+### Caso 5: "Buscar texto dentro de una ley"
 
 **Ejemplos:**
 - "Busca 'plazo' en la Ley 39/2015"
@@ -108,7 +137,7 @@
 
 ---
 
-### Caso 5: "Ver estructura de una ley"
+### Caso 6: "Ver estructura de una ley"
 
 **Ejemplos:**
 - "¿Cómo está organizada la Ley 40/2015?"
@@ -126,7 +155,7 @@ Si necesita más detalle:
 
 ---
 
-### Caso 6: "Oposiciones publicadas hoy"
+### Caso 7: "Oposiciones publicadas hoy"
 
 **Flujo recomendado:**
 ```
@@ -139,7 +168,7 @@ Si necesita más detalle:
 
 ---
 
-### Caso 7: "Disposiciones generales de hoy"
+### Caso 8: "Disposiciones generales de hoy"
 
 **Flujo recomendado:**
 ```
@@ -161,7 +190,7 @@ Si necesita más detalle:
 
 ---
 
-### Caso 8: "Buscar leyes vigentes sobre X tema"
+### Caso 9: "Buscar leyes vigentes sobre X tema"
 
 **Flujo recomendado:**
 ```
@@ -175,7 +204,7 @@ Si necesita más detalle:
 
 ---
 
-### Caso 9: "Leyes de un ministerio específico"
+### Caso 10: "Leyes de un ministerio específico"
 
 **Flujo recomendado:**
 ```
@@ -188,7 +217,7 @@ Si necesita más detalle:
 
 ---
 
-### Caso 10: "Obtener metadatos de una ley"
+### Caso 11: "Obtener metadatos de una ley"
 
 **Flujo recomendado:**
 ```
@@ -209,6 +238,7 @@ Si necesita más detalle:
 | Estructura de una ley | `get_law_structure_summary` |
 | Índice paginado de ley | `get_law_index` |
 | Texto de un artículo | `get_article_info` |
+| ¿Ha sido modificado el artículo X? | `get_article_modifications` |
 | Buscar dentro de una ley | `search_in_law` |
 | Metadatos de una ley | `get_law_section(section="metadatos")` |
 | Texto completo de una ley | `get_law_section(section="texto")` |
@@ -306,6 +336,7 @@ Usuario: "Busca leyes sobre energías renovables"
 | `get_law_structure_summary` | ~3 KB | ~10 KB |
 | `get_law_index` (limit=20) | ~5 KB | ~15 KB |
 | `get_article_info` | ~2 KB | ~20 KB |
+| `get_article_modifications` | ~300 B | ~800 B |
 | `search_in_law` (limit=10) | ~3 KB | ~10 KB |
 | `search_laws_list` (limit=20) | ~10 KB | ~30 KB |
 

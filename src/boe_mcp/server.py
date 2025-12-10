@@ -25,10 +25,95 @@ from boe_mcp.validators import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOE-MCPServer")
 
+BOE_MCP_INSTRUCTIONS = """
+MCP server for querying the Spanish Official State Gazette (BOE) API - v1.6.0
+
+## MATRIZ DE DECISIÓN RÁPIDA
+
+| Necesito... | Herramienta |
+|-------------|-------------|
+| Vista general del BOE del día | `get_boe_summary_metadata` |
+| Documentos de una sección | `get_boe_summary_section` |
+| Detalles de un documento BOE | `get_boe_document_info` |
+| Buscar leyes por texto/fecha | `search_laws_list` |
+| Estructura de una ley | `get_law_structure_summary` |
+| Índice paginado de ley | `get_law_index` |
+| Texto de un artículo | `get_article_info` |
+| ¿Ha sido modificado el artículo X? | `get_article_modifications` |
+| Buscar dentro de una ley | `search_in_law` |
+| Metadatos de una ley | `get_law_section(section="metadatos")` |
+| Texto completo de una ley | `get_law_section(section="texto")` |
+| Códigos de materias/rangos | `get_auxiliary_table` |
+
+## ANTI-PATRONES (NO HACER)
+
+❌ NO usar `get_boe_summary` → Devuelve 300KB+. Usar `get_boe_summary_metadata` + `get_boe_summary_section`
+❌ NO usar `get_law_section(section="completa")` inicialmente → Puede devolver MB. Usar `get_law_structure_summary` primero
+❌ NO buscar sin filtros → Demasiados resultados. Siempre usar `solo_vigente=True`, `limit`, filtros de fecha
+
+## FLUJOS RECOMENDADOS
+
+### Explorar BOE del día:
+1. `get_boe_summary_metadata(fecha)` → Vista general con conteos
+2. `get_boe_summary_section(fecha, seccion)` → Documentos de sección elegida
+3. `get_boe_document_info(identificador)` → Detalles de documento específico
+
+### Consultar artículo de ley:
+1. `search_laws_list(numero_oficial="39/2015")` → Obtener identificador
+2. `get_article_info(identifier, articulo="21")` → Texto del artículo
+
+### Verificar modificaciones de artículo:
+1. `get_article_modifications(identifier, articulo)` → Si fue modificado, cuándo y por quién
+
+## CÓDIGOS DE SECCIÓN BOE
+| Código | Contenido |
+|--------|-----------|
+| 1 | Disposiciones generales (leyes, RD, órdenes) |
+| 2A | Nombramientos, situaciones, ceses |
+| 2B | Oposiciones y concursos |
+| 3 | Otras disposiciones |
+| 4 | Administración de Justicia |
+| 5A | Contratación del Sector Público |
+| 5B | Otros anuncios oficiales |
+| 5C | Anuncios particulares |
+
+## CÓDIGOS DE RANGO NORMATIVO
+1300=Ley, 1290=Ley Orgánica, 1340=Real Decreto, 1320=Real Decreto-ley, 1350=Orden
+"""
+
 mcp = FastMCP(
     "boe-mcp",
-    instructions="MCP server for querying the Spanish Official State Gazette (BOE) API"
+    instructions=BOE_MCP_INSTRUCTIONS
 )
+
+
+# =============================================================================
+# MCP RESOURCES - Contenido accesible bajo demanda
+# =============================================================================
+
+@mcp.resource("boe://guia")
+def get_guia_uso_resource() -> str:
+    """Guía de uso del servidor BOE MCP con matriz de decisión y flujos recomendados."""
+    return BOE_MCP_INSTRUCTIONS
+
+
+# =============================================================================
+# HERRAMIENTA: Guía de uso (para clientes que no soportan resources/instructions)
+# =============================================================================
+
+@mcp.tool()
+def get_usage_guide() -> str:
+    """
+    Obtiene la guía de uso del servidor BOE MCP.
+
+    Llama a esta herramienta PRIMERO si no conoces las herramientas disponibles
+    o necesitas saber cuál usar para tu caso de uso.
+
+    Returns:
+        Guía con matriz de decisión, anti-patrones, flujos recomendados y códigos.
+    """
+    return BOE_MCP_INSTRUCTIONS
+
 
 BOE_API_BASE = "https://www.boe.es"
 USER_AGENT = "boe-mcp-client/1.0"
@@ -761,6 +846,241 @@ def _extraer_numero_articulo(titulo: str) -> str:
         return match.group(1)
 
     return ""
+
+
+@mcp.tool()
+async def get_article_modifications(
+    identifier: str,
+    articulo: str
+) -> dict:
+    """
+    Verifica si un artículo específico ha sido modificado y por qué normas.
+
+    Esta herramienta permite monitorizar cambios en artículos concretos de leyes.
+    Devuelve información compacta (~300-600 bytes) sobre el historial de
+    modificaciones, ideal para:
+    - Verificar si un artículo que afecta a un procedimiento sigue vigente
+    - Monitorización automatizada (cron) de cambios en artículos específicos
+    - Auditorías de cumplimiento normativo
+
+    NOTA: Esta herramienta NO devuelve el texto del artículo. Para obtenerlo,
+    usar get_article_info con incluir_texto=True.
+
+    Args:
+        identifier: ID BOE de la ley (ej. "BOE-A-2015-10565" para Ley 39/2015)
+        articulo: Número del artículo a consultar. Formatos válidos:
+            - Número simple: "1", "28", "77"
+            - Con sufijo latino: "224 bis", "37 quater"
+            - Artículo único: "único"
+
+    Returns:
+        Diccionario con:
+        - modificado: True si el artículo fue modificado después de la publicación
+        - articulo: Número consultado
+        - ley_id: Identificador de la ley
+        - titulo_articulo: Título del artículo (ej. "Documentos aportados...")
+        - fecha_version_original: Fecha de publicación de la ley (AAAAMMDD)
+        - fecha_version_actual: Fecha de la última versión del artículo
+        - total_versiones: Número de versiones del artículo (1 = sin modificar)
+        - modificaciones: Lista de modificaciones con:
+            - version: Número de versión (2, 3, ...)
+            - norma_modificadora: ID BOE de la norma que modifica
+            - fecha_publicacion: Fecha de publicación de la modificación
+            - fecha_vigencia: Fecha de entrada en vigor
+            - descripcion: Descripción del cambio (si disponible)
+
+        En caso de error:
+        - error: True
+        - codigo: "VALIDATION_ERROR" | "LEY_NO_ENCONTRADA" | "ARTICULO_NO_ENCONTRADO"
+        - mensaje: Descripción del error
+
+    Examples:
+        >>> get_article_modifications("BOE-A-2015-10565", "28")
+        {
+            "modificado": True,
+            "articulo": "28",
+            "fecha_version_actual": "20181206",
+            "total_versiones": 2,
+            "modificaciones": [{"norma_modificadora": "BOE-A-2018-16673", ...}]
+        }
+
+        >>> get_article_modifications("BOE-A-2015-10565", "21")
+        {
+            "modificado": False,
+            "articulo": "21",
+            "fecha_version_actual": "20151002",
+            "total_versiones": 1,
+            "modificaciones": []
+        }
+    """
+    # 1. VALIDACIÓN
+    try:
+        identifier = validate_boe_identifier(identifier)
+        articulo = validate_articulo(articulo)
+    except ValidationError as e:
+        return {
+            "error": True,
+            "codigo": "VALIDATION_ERROR",
+            "mensaje": str(e),
+            "detalles": None
+        }
+
+    # 2. OBTENER ÍNDICE PARA ENCONTRAR EL ARTÍCULO Y FECHA ORIGINAL
+    base = f"/datosabiertos/api/legislacion-consolidada/id/{identifier}"
+    indice_endpoint = f"{base}/texto/indice"
+
+    indice_xml = await make_boe_raw_request(indice_endpoint, accept="application/xml")
+
+    if indice_xml is None:
+        return {
+            "error": True,
+            "codigo": "LEY_NO_ENCONTRADA",
+            "mensaje": f"No se pudo recuperar la ley {identifier}",
+            "detalles": {"identifier": identifier}
+        }
+
+    # 3. PARSEAR ÍNDICE PARA ENCONTRAR BLOCK_ID Y FECHA ORIGINAL
+    try:
+        root = ET.fromstring(indice_xml)
+        bloques = root.findall(".//bloque")
+    except ET.ParseError as e:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "Error procesando respuesta de la API",
+            "detalles": {"error_xml": str(e)}
+        }
+
+    if not bloques:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "La ley no contiene bloques de texto",
+            "detalles": None
+        }
+
+    # Obtener fecha original de la ley (la más antigua)
+    fechas = []
+    for bloque in bloques:
+        fecha_elem = bloque.find("fecha_actualizacion")
+        if fecha_elem is not None and fecha_elem.text:
+            fechas.append(fecha_elem.text)
+
+    fecha_ley_original = min(fechas) if fechas else ""
+
+    # Buscar el artículo en el índice
+    if articulo.lower() == "único":
+        patron_titulo = "artículo único"
+    else:
+        patron_titulo = f"artículo {articulo}"
+
+    block_id = None
+    titulo_articulo = ""
+
+    for bloque in bloques:
+        titulo_elem = bloque.find("titulo")
+        if titulo_elem is None or titulo_elem.text is None:
+            continue
+
+        titulo = titulo_elem.text.lower().replace('\xa0', ' ')
+
+        if titulo.startswith(patron_titulo):
+            siguiente_char_idx = len(patron_titulo)
+            if siguiente_char_idx < len(titulo):
+                siguiente_char = titulo[siguiente_char_idx]
+                if siguiente_char not in ". ":
+                    continue
+
+            id_elem = bloque.find("id")
+            block_id = id_elem.text if id_elem is not None else None
+            # Título original normalizado (sin non-breaking spaces)
+            titulo_articulo = titulo_elem.text.replace('\xa0', ' ')
+            break
+
+    if block_id is None:
+        return {
+            "error": True,
+            "codigo": "ARTICULO_NO_ENCONTRADO",
+            "mensaje": f"No se encontró el artículo {articulo} en {identifier}",
+            "detalles": {"identifier": identifier, "articulo": articulo}
+        }
+
+    # 4. OBTENER BLOQUE CON VERSIONES
+    bloque_endpoint = f"{base}/texto/bloque/{block_id}"
+    bloque_xml = await make_boe_raw_request(bloque_endpoint, accept="application/xml")
+
+    if bloque_xml is None:
+        return {
+            "error": True,
+            "codigo": "ERROR_API",
+            "mensaje": f"No se pudo recuperar el bloque {block_id}",
+            "detalles": {"block_id": block_id}
+        }
+
+    # 5. PARSEAR VERSIONES DEL BLOQUE
+    try:
+        bloque_root = ET.fromstring(bloque_xml)
+        versiones = bloque_root.findall(".//version")
+    except ET.ParseError as e:
+        return {
+            "error": True,
+            "codigo": "ERROR_PARSING",
+            "mensaje": "Error procesando bloque de la API",
+            "detalles": {"error_xml": str(e)}
+        }
+
+    # 6. EXTRAER INFORMACIÓN DE VERSIONES
+    total_versiones = len(versiones) if versiones else 1
+    modificaciones = []
+
+    if versiones and len(versiones) > 0:
+        version_original = versiones[0]
+        version_actual = versiones[-1]
+
+        fecha_version_original = version_original.get("fecha_publicacion", fecha_ley_original)
+        fecha_version_actual = version_actual.get("fecha_publicacion", fecha_ley_original)
+
+        # Extraer modificaciones (todas excepto la primera versión)
+        for i, version in enumerate(versiones[1:], start=2):
+            # Buscar nota explicativa
+            nota_elem = version.find(".//p[@class='nota_pie']")
+            descripcion = nota_elem.text if nota_elem is not None else None
+
+            # Si no hay nota_pie directa, buscar en blockquote
+            if descripcion is None:
+                blockquote = version.find(".//blockquote")
+                if blockquote is not None:
+                    nota_elem = blockquote.find(".//p[@class='nota_pie']")
+                    if nota_elem is not None:
+                        # Extraer texto incluyendo posibles hijos
+                        descripcion = "".join(nota_elem.itertext()).strip()
+
+            modificaciones.append({
+                "version": i,
+                "norma_modificadora": version.get("id_norma", ""),
+                "fecha_publicacion": version.get("fecha_publicacion", ""),
+                "fecha_vigencia": version.get("fecha_vigencia", ""),
+                "descripcion": descripcion
+            })
+    else:
+        # Sin versiones encontradas, usar fecha del índice
+        fecha_version_original = fecha_ley_original
+        fecha_version_actual = fecha_ley_original
+
+    # 7. DETERMINAR SI FUE MODIFICADO
+    modificado = total_versiones > 1
+
+    # 8. RETORNAR RESULTADO COMPACTO
+    return {
+        "modificado": modificado,
+        "articulo": articulo,
+        "ley_id": identifier,
+        "titulo_articulo": titulo_articulo,
+        "fecha_version_original": fecha_version_original,
+        "fecha_version_actual": fecha_version_actual,
+        "total_versiones": total_versiones,
+        "modificaciones": modificaciones
+    }
 
 
 @mcp.tool()

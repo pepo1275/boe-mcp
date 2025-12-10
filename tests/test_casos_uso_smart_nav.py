@@ -311,7 +311,7 @@ class TestIntermediateGetLawStructureSummary:
         # Buscar LIBRO PRIMERO
         libro_primero = None
         for item in result["estructura"]:
-            if "PRIMERO" in item["nombre"].upper():
+            if "PRIMERO" in item["titulo"].upper():
                 libro_primero = item
                 break
 
@@ -329,7 +329,7 @@ class TestIntermediateGetLawStructureSummary:
         # Buscar LIBRO SEGUNDO
         libro_segundo = None
         for item in result["estructura"]:
-            if "SEGUNDO" in item["nombre"].upper():
+            if "SEGUNDO" in item["titulo"].upper():
                 libro_segundo = item
                 break
 
@@ -441,7 +441,7 @@ class TestAdvancedAnalysis:
                 ratio = libro["num_modificados"] / libro["num_articulos"]
                 if ratio > max_ratio:
                     max_ratio = ratio
-                    libro_mas_modificado = libro["nombre"]
+                    libro_mas_modificado = libro["titulo"]
 
         assert libro_mas_modificado is not None
 
@@ -473,9 +473,9 @@ class TestAdvancedNavigation:
         # Navegar hasta TÍTULO IV del LIBRO PRIMERO
         capitulos_titulo_iv = 0
         for libro in result["estructura"]:
-            if "PRIMERO" in libro["nombre"].upper():
+            if "PRIMERO" in libro["titulo"].upper():
                 for titulo in libro["hijos"]:
-                    if "TÍTULO IV" in titulo["nombre"].upper():
+                    if "TÍTULO IV" in titulo["titulo"].upper():
                         capitulos_titulo_iv = len(titulo["hijos"])
                         break
                 break
